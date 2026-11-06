@@ -61,7 +61,8 @@ export function ago(time) {
   return seconds < 60 ? "now" : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86400)}d`;
 }
 export function tint(color, alpha = "26") { return /^#[a-f\d]{6}/i.test(color) ? color.slice(0, 7) + alpha : color; }
-export function refLabel(ref) { return ref.replace(/refs\/(heads|remotes|tags)\//g, ""); }
+// HEAD is drawn as a ring on the graph, so "HEAD -> main" reads as "main".
+export function refLabel(ref) { return ref.replace(/^HEAD -> /, "").replace(/refs\/(heads|remotes|tags)\//g, ""); }
 export function sameHead(a, b) { return a.head === b.head && a.branch === b.branch && a.upstream === b.upstream; }
 export function contextKey(where) { return JSON.stringify([where?.cwd || "", where?.on || null]); }
 

@@ -33,7 +33,6 @@ export function segments(id, items, current, action) {
       .on_click((_event, cx) => action(value, cx)).child(label)));
 }
 export const bar = (height = 36) => h_flex().h(height).flex_none().px(14).gap(8).items_center().border_b(1).border_color(theme().border);
-export const label = text => div().font_semibold().text_size(12).child(text);
 export const secondary = text => div().min_w(0).truncate().text_size(11).text_color(theme().muted).child(text);
 export function pill(text, color = theme().accent) {
   return div().flex_none().max_w(180).truncate().px(6).py(1).rounded(4).text_size(10).bg(tint(color)).text_color(color).child(text);
@@ -42,9 +41,16 @@ export function empty(title, detail) {
   return v_flex().px(22).py(28).gap(7).child(div().font_semibold().text_size(13).child(title))
     .child(div().text_size(12).text_color(theme().muted).child(detail));
 }
+// Lane 0 centers on a 13px icon column, so commit text shares the left edge of PR and branch rows.
+const LANE = 12, FIRST = 6;
+export const graphCellWidth = lanes => Math.max(13, FIRST * 2 + (lanes - 1) * LANE);
+export function checkColor(kind) {
+  const t = theme();
+  return kind === "failed" ? t.ansi1 : kind === "pending" ? t.working : kind === "passed" ? t.ansi2 : t.muted;
+}
 export function graphCell(row, head, width) {
   const t = theme(), colors = [t.accent, t.ansi2, t.ansi5, t.ansi3, t.ansi6, t.ansi4], paths = new Map();
-  const x = lane => 12 + lane * 12, y = fraction => fraction * ROW;
+  const x = lane => FIRST + lane * LANE, y = fraction => fraction * ROW;
   for (const [a, ya, b, yb, c] of row.segments) {
     const color = colors[c % colors.length];
     let path = (paths.get(color) || PathBuilder.stroke(1.5)).move_to(x(a), y(ya));
