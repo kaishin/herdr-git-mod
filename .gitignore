@@ -1,0 +1,5 @@
+.DS_Store
+mods/*/*.d.ts
+mods/*/jsconfig.json
+node_modules/
+.impeccable/

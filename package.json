@@ -1,0 +1,1 @@
+{"name":"herdr-git-mod","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.mjs","check":"herdr-app check mods/Git"}}

@@ -1,0 +1,13 @@
+{
+  "images": [
+    "history.png",
+    "pull-requests.png"
+  ],
+  "source": "herdr-app shot native window captures",
+  "content": "Synthetic fixtures from scripts/check-ui.py; no real repository or GitHub data",
+  "processing": "Cropped to the preview panel, resized to 1090x710; no compositing",
+  "captureFiles": [
+    "/tmp/herdr-git-history-rendered.png",
+    "/tmp/herdr-git-prs.png"
+  ]
+}
