@@ -1,4 +1,5 @@
 export const READ = ["--no-optional-locks", "-c", "color.ui=false"];
+export const COMMIT_FILES = 300;
 export const PR_FIELDS = "number,title,url,author,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,reviewDecision,updatedAt,statusCheckRollup";
 
 export function parseLog(text) {
@@ -85,4 +86,39 @@ export function actionArgs(action, snapshot) {
     return ["push", "--no-follow-tags", "--recurse-submodules=no", ...(snapshot.upstream ? [] : ["--set-upstream"]), "--", action.remote, `refs/heads/${snapshot.branch}:${action.target}`];
   }
   throw new Error("Unknown Git action.");
+}
+
+// Turns a gh failure into one cause the person can act on. Order matters: gh's
+// "not a GitHub host" message also mentions `gh auth login`.
+export function prProblem(message, remotes, machine) {
+  const text = String(message || "").trim(), where = machine ? `on ${machine}` : "on this computer";
+  if (!remotes?.length || /no git remotes found/i.test(text)) return { kind: "no-remote", title: "This checkout has no remote", detail: "Pull requests come from GitHub. Add a GitHub remote, then refresh.", command: "git remote add origin <GitHub URL>", copy: "git remote add origin " };
+  if (/none of the git remotes|known GitHub host/i.test(text)) return { kind: "not-github", title: "No GitHub remote", detail: `Remotes: ${remotes.join(", ")}. None points to GitHub, so there are no pull requests to show.` };
+  if (/set-default|determine base repo|multiple remotes/i.test(text)) return { kind: "no-default", title: "Choose the repository for pull requests", detail: "This checkout has more than one GitHub remote. Set a default, then retry.", command: "gh repo set-default", retry: true };
+  if (/gh auth login|not logged in|authentication required|HTTP 401|bad credentials/i.test(text)) return { kind: "auth", title: "Sign in to GitHub CLI", detail: `GitHub CLI has no session ${where}. Sign in, then retry.`, command: "gh auth login", retry: true };
+  if (/^gh could not finish:.*(not found|ENOENT|no such file|cannot find)/i.test(text)) return { kind: "no-gh", title: "GitHub CLI is not installed", detail: `Pull requests are read with gh. Install it ${where}, sign in with gh auth login, then retry.`, retry: true };
+  return { kind: "other", title: "Couldn’t load pull requests", detail: "GitHub CLI returned this error:", raw: text || "No details.", retry: true };
+}
+
+// `git show -s` with unit-separated fields; the raw message (%B) is last so it may contain anything.
+export function parseCommitMeta(text) {
+  const [hash, parents, author, email, time, committer, committerTime, refs, ...message] = text.split("\x1f");
+  const raw = message.join("\x1f").replace(/\s+$/, "");
+  const [subject, ...rest] = raw.split("\n");
+  const body = rest.join("\n").trim();
+  return { hash: hash.trim(), parents: parents ? parents.split(" ").filter(Boolean) : [], author, email, time: Number(time), committer, committerTime: Number(committerTime),
+    refs: (refs || "").split(", ").filter(Boolean), subject: subject || "", body: body.slice(0, 8000), bodyTruncated: body.length > 8000 };
+}
+// Pairs `diff-tree -z --numstat` with `--name-status`. Binary files report "-" counts.
+export function parseCommitFiles(numstat, status) {
+  const kinds = new Map(), parts = status.split("\0");
+  for (let i = 0; i + 1 < parts.length; i += 2) if (parts[i]) kinds.set(parts[i + 1], parts[i][0]);
+  return numstat.split("\0").filter(Boolean).map(line => {
+    const [added, deleted, ...path] = line.split("\t"), name = path.join("\t"), binary = added === "-";
+    return { path: name, status: kinds.get(name) || "M", additions: binary ? null : Number(added), deletions: binary ? null : Number(deleted), binary };
+  });
+}
+export function shortDate(time) {
+  const d = new Date(time * 1000), pad = n => String(n).padStart(2, "0");
+  return Number.isFinite(d.getTime()) ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : "";
 }

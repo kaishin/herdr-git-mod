@@ -24,13 +24,20 @@ export function button(id, label, action, o = {}) {
       .when(Boolean(o.icon), e => e.child(svg(icon(o.icon)).size(o.small ? 12 : 13).flex_none()))
       .when(Boolean(label), e => e.child(div().min_w(0).truncate().child(label))));
 }
+// Items are [value, label, count?]. A count shows as a round pill after the label.
 export function segments(id, items, current, action) {
   const t = theme();
   return h_flex().flex_none().h(26).p(2).gap(2).items_center().rounded(7).bg(t.background).border_1().border_color(t.border)
-    .children(items.map(([value, label]) => Button.new(`${id}-${value}`).h(20).px(8).rounded(5).text_size(12)
-      .bg(value === current ? t.selected : "#00000000").text_color(value === current ? t.foreground : t.muted)
-      .cursor_pointer().hover(s => s.bg(t.hover)).accessibility_label(label).on_mouse_down("left", stop)
-      .on_click((_event, cx) => action(value, cx)).child(label)));
+    .children(items.map(([value, label, count]) => {
+      const on = value === current, hasCount = count !== null && count !== undefined;
+      return Button.new(`${id}-${value}`).h(20).px(8).rounded(5).text_size(12)
+        .bg(on ? t.selected : "#00000000").text_color(on ? t.foreground : t.muted)
+        .cursor_pointer().hover(s => s.bg(t.hover)).accessibility_label(hasCount ? `${label}, ${count}` : label).on_mouse_down("left", stop)
+        .on_click((_event, cx) => action(value, cx))
+        .child(h_flex().gap(6).items_center().child(label)
+          .when(hasCount, e => e.child(div().h(16).min_w(16).px(5).flex().items_center().justify_center().rounded_full()
+            .bg(tint(t.muted, on ? "40" : "26")).text_size(10).line_height("16px").font_semibold().text_color(on ? t.foreground : t.muted).child(String(count)))));
+    }));
 }
 export const bar = (height = 36) => h_flex().h(height).flex_none().px(14).gap(8).items_center().border_b(1).border_color(theme().border);
 export const secondary = text => div().min_w(0).truncate().text_size(11).text_color(theme().muted).child(text);

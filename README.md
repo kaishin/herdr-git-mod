@@ -49,7 +49,7 @@ A pane can be opened with the normal `pane.split` command and `mod: "Git"`. No l
 
 ### Shizen integration on this machine
 
-Only `~/.dotfiles/tag-herdr/config/herdr-app/layouts/Shizen.json` was edited: a 40px GitHub button before Review, plus a `Git` child in the existing panel stack. Its rcm symlink is preserved. Existing dimensions, other mods, user layouts, and keybindings were left alone.
+Only `~/.dotfiles/tag-herdr/config/herdr-app/layouts/Shizen.json` was edited: a 64px **Git** button (icon and label, styled like Review) before Review, plus a `Git` child in the existing panel stack. Its rcm symlink is preserved. Existing dimensions, other mods, user layouts, and keybindings were left alone.
 
 Commands delivered to visible copies: `Git.history`, `Git.prs`, `Git.branches`, `Git.refresh`. In a focused list, Up/Down select rows; Enter opens a row or asks to switch a branch. Escape dismisses confirmation/details before returning from the branch picker.
 
@@ -64,7 +64,7 @@ Git does not provide a transaction spanning our preflight and an external checko
 ## Limits
 
 - Remote refs and ahead/behind counts are from the last Git fetch; Refresh reads local state, it does not fetch. Pull fetches its upstream.
-- History loads 150 commits at a time; PRs load 50 at a time. Lists are virtualized. Commit summaries show up to 30 changed-file statistics; PR bodies are capped at 12,000 characters and detail views at 80 checks. GitHub has the complete PR.
+- History loads 150 commits at a time; PRs load 50 at a time. Lists are virtualized. Commit details list up to 300 changed files; PR bodies are capped at 12,000 characters and detail views at 80 checks. GitHub has the complete PR.
 - Local reads poll every 15 seconds, PRs every 60 seconds while that docked view is visible. Hidden docked panels do not poll. Standalone/pane copies without a `dock` descriptor use the same gentle polling even if their host is hidden.
 - Herdr `exec` has a 30-second/8-MiB limit. Large repositories or slow network operations can exceed it.
 - No merge/rebase/reset, staging, commit creation, CI reruns, or automatic branch cleanup. Codewalker remains the code-review surface.
@@ -77,7 +77,7 @@ python3 scripts/check-ui.py       # populated native descriptions and deferred-r
 herdr-app check mods/Git
 ```
 
-Seven behavior tests cover DAG topology, unborn/detached checkouts, dirty/stale/worktree refusal, tracking branches, publish/push/pull/divergence, status parsing, honest CI states, and PR preflight. Twelve native checks cover virtual/eager rows, narrow/wide views, details, and confirmations. Native screenshots were inspected for history and PRs; a live repository’s history was also observed. A read-only `gh pr list` succeeded against an existing checkout (zero open PRs). No real GitHub checkout/push/pull or pointer-driven interaction test was performed.
+Nine behavior tests cover DAG topology, unborn/detached checkouts, dirty/stale/worktree refusal, tracking branches, publish/push/pull/divergence, status parsing, honest CI states, PR preflight, PR load-failure causes, and commit details (root, binary, deleted, merge). Twelve native checks cover virtual/eager rows, narrow/wide views, details, and confirmations. Native screenshots were inspected for history and PRs; a live repository’s history was also observed. A read-only `gh pr list` succeeded against an existing checkout (zero open PRs). No real GitHub checkout/push/pull or pointer-driven interaction test was performed.
 
 `python3 scripts/check-ui.py --preview history` (or `prs`/`branches`) opens an isolated, non-writing synthetic preview mod. Close that overlay, then run `--clean-preview` to remove it. This creates no layout.
 

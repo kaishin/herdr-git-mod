@@ -3,11 +3,14 @@ import { h_flex, v_flex, Button, InputState, Input, TextView, v_virtual_list, Sc
 import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
-import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary } from "./model.js";
+import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW } from "./ui.js";
 
+const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
 // Below this width the PR filter takes its own row instead of sharing the mode row.
-const PR_FILTER_INLINE = 480;
+const PR_FILTER_INLINE = 500;
+// Three lines: 16px title, 1px, 14px byline, 5px, 16px status, with 8px above and below.
+const PR_ROW = 68;
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -81,7 +84,7 @@ export default class Git extends View {
     this.search.on("change", (_e, cx) => cx.notify());
     this.enter(this.where, cx);
     cx.timer.every(15000, cx => { if (this.visible() && !this.busy && !this.loading && !this.pending) this.refresh(cx); });
-    cx.timer.every(60000, cx => { if (this.visible() && this.mode === "prs" && !this.pending) this.loadPRs(cx); });
+    cx.timer.every(60000, cx => { if (this.visible() && !this.pending) this.loadPRs(cx); });
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
@@ -130,12 +133,13 @@ export default class Git extends View {
         this.error = null;
         this.updated = Date.now();
       } catch (e) { if (epoch === this.epoch) { this.error = e.message; this.pending = null; } }
-      finally { if (epoch === this.epoch) { this.loading = false; if (prs && this.mode === "prs") this.loadPRs(cx); cx.notify(); } }
+      finally { if (epoch === this.epoch) { this.loading = false; if (prs) this.loadPRs(cx); cx.notify(); } }
     });
   }
   loadPRs(cx) {
     if (this.busy || this.prLoading || !this.data) return;
-    const epoch = ++this.prEpoch, client = this.client, filter = this.filter;
+    if (!this.data.remotes.length) { this.prEpoch++; this.prs = null; this.prError = prProblem("", [], this.where.on); cx.notify(); return; }
+    const epoch = ++this.prEpoch, client = this.client, filter = this.filter, remotes = this.data.remotes;
     this.prLoading = true;
     cx.spawn(async cx => {
       try {
@@ -144,7 +148,7 @@ export default class Git extends View {
         this.prs = result.rows;
         this.prMore = result.more;
         this.prError = null;
-      } catch (e) { if (epoch === this.prEpoch) this.prError = `${e.message}\nThis checkout needs a GitHub remote and an authenticated gh session on ${this.where.on || "this computer"}. Check gh auth status, then retry.`; }
+      } catch (e) { if (epoch === this.prEpoch) { this.prs = null; this.prError = prProblem(e.message, remotes, this.where.on); } }
       finally { if (epoch === this.prEpoch) { this.prLoading = false; cx.notify(); } }
     });
   }
@@ -303,26 +307,48 @@ export default class Git extends View {
   prList() {
     const t = theme(), rows = this.prs || [];
     return v_flex().flex_1().min_h(0).min_w(0)
-      .when(Boolean(this.prError), e => e.child(empty("Couldn’t load pull requests", this.prError)).child(h_flex().px(22).child(button("retry-pr", "Retry", cx => this.loadPRs(cx), { enabled: !this.prLoading }))))
+      .when(Boolean(this.prError), e => e.child(this.problemView(this.prError)))
       .when(!this.prError && !rows.length, e => e.child(empty(this.prLoading ? "Loading pull requests…" : "No open pull requests", this.prLoading ? "Reading this repository through GitHub CLI." : this.filter === "all" ? "Open pull requests for this repository appear here." : "Try This repo to see everyone’s pull requests.")))
-      .when(rows.length > 0, e => e.child(this.list("prs", rows, 76, pr => {
+      .when(rows.length > 0, e => e.child(this.list("prs", rows, PR_ROW, pr => {
         const on = this.selected?.item?.number === pr.number;
         const current = !pr.isCrossRepository && pr.headRefName === this.data?.branch;
-        // The icon sits in its own column so all three lines share the title’s left edge.
-        return div().id(`pr-${pr.number}`).flex().items_center().w_full().h(76).px(14).bg(on ? t.selected : "#00000000").text_color(t.foreground)
+        // Title and byline are one tight pair, as in commit rows; status sits a step below.
+        // The icon has its own column so every line shares the title’s left edge.
+        return div().id(`pr-${pr.number}`).flex().items_center().w_full().h(PR_ROW).px(14).bg(on ? t.selected : "#00000000").text_color(t.foreground)
           .hover(s => s.bg(on ? t.selected : t.hover)).cursor_pointer()
-          .accessibility_label(`Pull request ${pr.number}: ${pr.title}`)
+          .accessibility_label(`Pull request ${pr.number}: ${pr.title}${pr.isDraft ? ", draft" : ""}`)
           .child(h_flex().w_full().min_w(0).items_start().gap(8)
             .child(svg(icon("pr")).size(13).mt(2).flex_none().text_color(pr.isDraft ? t.dim : t.ansi2))
-            .child(v_flex().flex_1().min_w(0).gap(4)
-              .child(div().min_w(0).truncate().font_semibold().text_size(12).child(pr.title))
-              .child(secondary(`#${pr.number} · ${pr.author?.login || "ghost"} · ${pr.headRefName} → ${pr.baseRefName}`))
-              .child(h_flex().h(16).gap(8).min_w(0).items_center()
-                .child(div().flex_none().text_size(11).text_color(checkColor(pr.checks.kind)).child(pr.checks.label))
-                .child(div().min_w(0).truncate().text_size(11).text_color(t.muted).child(reviewLabel(pr)))
+            .child(v_flex().flex_1().min_w(0)
+              .child(div().min_w(0).truncate().font_semibold().text_size(12).line_height("16px").text_color(pr.isDraft ? t.muted : t.foreground).child(pr.title))
+              .child(h_flex().mt(1).min_w(0).gap(4).items_center().text_size(11).line_height("14px")
+                .child(div().flex_none().text_color(t.dim).child(`#${pr.number}`))
+                .child(div().min_w(0).truncate().text_color(t.muted).child(`${pr.author?.login || "ghost"} · ${pr.headRefName} → ${pr.baseRefName}`)))
+              .child(h_flex().mt(5).h(16).min_w(0).gap(6).items_center().text_size(11).line_height("14px")
+                .child(div().size(6).flex_none().rounded_full().bg(checkColor(pr.checks.kind)))
+                .child(div().flex_none().text_color(pr.checks.kind === "failed" ? t.ansi1 : t.muted).child(pr.checks.label))
+                .child(div().flex_none().text_color(t.dim).child("·"))
+                .child(div().min_w(0).truncate().text_color(pr.reviewDecision === "CHANGES_REQUESTED" ? t.ansi1 : t.muted).child(reviewLabel(pr)))
                 .when(current, e => e.child(pill("Current", t.accent))))));
       })))
       .when(Boolean(this.prMore), e => e.child(this.loadMore("more-prs", "Load more pull requests", cx => { this.prLimit += 50; this.loadPRs(cx); cx.notify(); }, !this.prLoading)));
+  }
+  // A setup problem gets a title, its fix, and a command to copy. Raw gh output only for unknown causes.
+  problemView(problem) {
+    const t = theme(), copied = this.copied === (problem.copy || problem.command);
+    return v_flex().px(22).py(28).gap(14)
+      .child(v_flex().gap(6)
+        .child(div().font_semibold().text_size(13).child(problem.title))
+        .child(div().text_size(12).text_color(t.muted).child(problem.detail)))
+      .when(Boolean(problem.command), e => e.child(h_flex().h(32).pl(10).pr(4).gap(8).items_center().rounded(6).bg(t.surface).border_1().border_color(t.border)
+        .child(div().flex_1().min_w(0).truncate().font_family(settings().font_family).text_size(12).text_color(t.foreground).child(problem.command))
+        .child(button("copy-command", copied ? "Copied" : "Copy", cx => { cx.write_to_clipboard(problem.copy || problem.command); this.copied = problem.copy || problem.command; cx.notify(); },
+          { small: true, ghost: true, tooltip: problem.copy ? "Copy the command; add the URL after pasting" : "Copy the command" }))))
+      .when(Boolean(problem.raw), e => e.child(div().max_h(160).p(10).rounded(6).bg(t.surface).border_1().border_color(t.border)
+        .font_family(settings().font_family).text_size(11).text_color(t.muted).child(problem.raw)))
+      .child(h_flex().gap(8)
+        .when(Boolean(problem.retry), e => e.child(button("retry-pr", this.prLoading ? "Retrying…" : "Retry", cx => this.loadPRs(cx), { enabled: !this.prLoading })))
+        .when(!problem.retry, e => e.child(button("refresh-pr", "Refresh", cx => this.refresh(cx, true), { icon: "refresh", enabled: !this.loading && !this.busy, tooltip: "Read the remotes again" }))));
   }
   branches() {
     const t = theme(), rows = this.branchRows();
@@ -345,17 +371,18 @@ export default class Git extends View {
     const t = theme(), selected = this.selected, pr = selected.kind === "pr", item = this.detail || selected.item;
     return v_flex().min_h(0).min_w(0).flex_none().border_color(t.border)
       .when(wide, e => e.w(Math.min(420, this.width * 0.4)).border_l(1))
-      .when(!wide, e => e.h(Math.min(300, Math.max(150, this.height * 0.38))).border_t(1))
+      .when(!wide, e => e.h(Math.min(440, Math.max(180, this.height * 0.5))).border_t(1))
       // One header row: identity, then the actions for this item.
       .child(bar(40).child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12).child(pr ? `Pull request #${selected.item.number}` : `Commit ${selected.item.hash.slice(0, 8)}`))
         .when(pr, e => e
           .child(button("checkout-pr", "Check out", cx => this.ask({ kind: "pr", pr: item }, cx), { small: true, icon: "git-branch", enabled: !this.busy && !this.error && !this.loading && !this.detailLoading && Boolean(this.detail), tooltip: "Check out this pull request in the current checkout" }))
           .child(button("open-pr", "", cx => { if (/^https:\/\//.test(item.url || "")) cx.open_url(item.url); }, { small: true, icon: "github", enabled: /^https:\/\//.test(item.url || ""), tooltip: "Open pull request on GitHub" })))
+        .when(!pr, e => e.child(button("copy-hash", this.copied === selected.item.hash ? "Copied" : "Copy ID", cx => { cx.write_to_clipboard(selected.item.hash); this.copied = selected.item.hash; cx.notify(); }, { small: true, tooltip: `Copy ${selected.item.hash}` })))
         .child(button("close-detail", "", cx => { this.selected = null; this.detail = null; this.detailEpoch++; cx.notify(); }, { small: true, ghost: true, icon: "x", tooltip: "Close details" })))
       .child(v_flex().id(`git-detail-${pr ? selected.item.number : selected.item.hash}`).flex_1().min_h(0).overflow_y_scrollbar().px(14).pt(12).pb(16).gap(14)
-        .when(this.detailLoading, e => e.child(secondary("Loading details…")))
+        .when(this.detailLoading && pr, e => e.child(secondary("Loading details…")))
         .when(Boolean(this.detailError), e => e.child(div().text_size(12).text_color(t.blocked).child(this.detailError)))
-        .when(!pr && Boolean(this.detail), e => e.child(div().font_family(settings().font_family).text_size(11).text_color(t.muted).child(this.detail)))
+        .when(!pr, e => e.children(this.commitBody(selected.item)))
         .when(pr && Boolean(this.detail), e => e
           // Title group: what, where, how big.
           .child(v_flex().gap(4)
@@ -374,6 +401,63 @@ export default class Git extends View {
           .when(item.checksList?.length > 0, e => e.child(v_flex().gap(2)
             .child(div().pb(4).text_size(11).font_semibold().text_color(t.dim).child(item.checksList.length > 80 ? `Checks · first 80 of ${item.checksList.length}` : "Checks"))
             .children(item.checksList.slice(0, 80).map((check, i) => this.checkRow(check, i)))))));
+  }
+  // What the commit says, who made it, where it sits, and what it touched. The list row
+  // already holds the subject and author, so those show at once; files follow.
+  commitBody(item) {
+    const t = theme(), detail = this.detail?.hash === item.hash ? this.detail : null, commit = detail || item;
+    const refs = (commit.refs || []).map(refLabel).filter(r => r !== "HEAD");
+    const loaded = this.data?.commits || [];
+    const fact = (name, value) => h_flex().min_h(22).min_w(0).gap(10).items_center()
+      .child(div().w(64).flex_none().text_size(11).line_height("18px").text_color(t.dim).child(name))
+      .child(h_flex().flex_1().min_w(0).flex_wrap().gap(6).items_center().text_size(12).line_height("18px").child(value));
+    const sameCommitter = !detail || (detail.committer === detail.author && Math.abs(detail.committerTime - detail.time) < 120);
+    const files = detail?.files || [];
+    return [
+      v_flex().gap(6)
+        .child(div().font_semibold().text_size(13).line_height("18px").child(commit.subject))
+        .when(Boolean(detail?.body), e => e.child(TextView.markdown(`git-commit-body-${item.hash}`, detail.body).selectable(true).w_full().text_size(12).text_color(t.muted)
+          .on_link_click((url, cx) => { if (/^https?:\/\//.test(url)) cx.open_url(url); })))
+        .when(Boolean(detail?.bodyTruncated), e => e.child(secondary("Message shortened."))),
+      v_flex().gap(2)
+        .child(fact("Author", div().min_w(0).truncate().tooltip(`${detail?.email || commit.author} · ${shortDate(commit.time)}`).child(`${commit.author} · ${since(commit.time)}`)))
+        .when(!sameCommitter, e => e.child(fact("Committed", div().min_w(0).truncate().tooltip(shortDate(detail.committerTime)).child(`${detail.committer} · ${since(detail.committerTime)}`))))
+        .child(fact(commit.parents.length > 1 ? "Parents" : "Parent", commit.parents.length ? h_flex().gap(6).children(commit.parents.map((hash, i) => {
+          const at = loaded.findIndex(c => c.hash === hash);
+          return button(`parent-${i}`, hash.slice(0, 7), cx => this.goToCommit(at, cx), { small: true, enabled: at >= 0, tooltip: at >= 0 ? `Show ${hash.slice(0, 8)}` : "Not in the loaded history" });
+        })) : div().text_color(t.muted).child("None · first commit")))
+        .when(refs.length > 0, e => e.child(fact("Refs", h_flex().min_w(0).flex_wrap().gap(4).children(refs.slice(0, 12).map(r => pill(r, r.startsWith("tag: ") ? t.ansi3 : t.accent)))))),
+      v_flex().gap(2)
+        .child(h_flex().pb(4).gap(8).items_center().text_size(11)
+          .child(div().flex_1().font_semibold().text_color(t.dim).child(detail ? `${detail.totalFiles} ${detail.totalFiles === 1 ? "file" : "files"} changed` : "Changed files"))
+          .when(Boolean(detail), e => e.child(div().text_color(t.ansi2).child(`+${detail.additions}`)).child(div().text_color(t.ansi1).child(`−${detail.deletions}`))))
+        .when(commit.parents?.length > 1, e => e.child(div().pb(4).text_size(11).text_color(t.muted).child(`Compared with first parent ${commit.parents[0].slice(0, 7)}.`)))
+        .when(this.detailLoading, e => e.child(secondary("Reading changed files…")))
+        .when(Boolean(detail) && !files.length, e => e.child(secondary("No file changes.")))
+        .children(files.map((file, i) => this.fileRow(file, i)))
+        .when(Boolean(detail) && detail.totalFiles > files.length, e => e.child(div().pt(4).child(secondary(`Showing ${files.length} of ${detail.totalFiles} files.`)))),
+    ];
+  }
+  fileRow(file, i) {
+    const t = theme(), slash = file.path.lastIndexOf("/");
+    const name = file.path.slice(slash + 1), folder = slash > 0 ? file.path.slice(0, slash) : "";
+    const color = { A: t.ansi2, D: t.ansi1, R: t.accent, C: t.accent }[file.status] || t.muted;
+    return h_flex().id(`file-${i}`).h(24).min_w(0).gap(8).items_center().text_size(12).tooltip(file.path)
+      .child(div().w(10).flex_none().font_family(settings().font_family).text_size(11).text_color(color).child(file.status))
+      // The file name leads; its folder trails, dim, and truncates first.
+      .child(h_flex().flex_1().min_w(0).gap(6).items_baseline()
+        .child(div().min_w(0).flex_none().max_w("70%").truncate().text_color(file.status === "D" ? t.muted : t.foreground).child(name))
+        .when(Boolean(folder), e => e.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(folder))))
+      .child(h_flex().flex_none().gap(6).text_size(11)
+        .when(file.binary, e => e.child(div().text_color(t.dim).child("binary")))
+        .when(!file.binary, e => e.child(div().text_color(file.additions ? t.ansi2 : t.dim).child(`+${file.additions}`)).child(div().text_color(file.deletions ? t.ansi1 : t.dim).child(`−${file.deletions}`))));
+  }
+  goToCommit(index, cx) {
+    const commit = this.data?.commits?.[index];
+    if (!commit) return;
+    this.cursor = commit.hash;
+    this.scroll.commits.scroll_to_item(index, "center");
+    this.select(commit, "commit", cx);
   }
   // Left-aligned rows read as a list of results, not a stack of buttons.
   checkRow(check, i) {
@@ -407,7 +491,11 @@ export default class Git extends View {
     if (this.toolbar) {
       const on = dockState(p.dock)?.on;
       return h_flex().size_full().pr(10).justify_end().items_center().bg(t.chrome).border_b(1).border_color(t.border)
-        .child(button("open-git", "", () => openGit(p.dock), { icon: "github", ghost: true, selected: on, tooltip: on ? "Close Git" : "Git · commits and pull requests" }));
+        .child(h_flex().id("open-git").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(12)
+          .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer()
+          .hover(s => s.bg(t.hover)).tooltip(on ? "Close Git" : "Git · commits and pull requests").accessibility_label(on ? "Close Git" : "Open Git")
+          .on_mouse_down("left", stop).on_click(() => openGit(p.dock))
+          .child(svg(icon("github")).size(14)).child("Git"));
     }
     if (!this.fixed && !this.busy) {
       const where = currentLocation(this.where);
@@ -415,6 +503,7 @@ export default class Git extends View {
       else this.where = where;
     }
     const data = this.data, width = this.width, wide = width >= 760;
+    const showFilter = this.mode === "prs" && (!this.prError || this.prError.kind === "other");
     const repo = (data?.root || this.where.cwd || "").split(/[\\/]/).filter(Boolean).pop();
     const error = this.operationError || this.error;
     const canSync = Boolean(data?.branch && data?.head) && !this.busy && !this.loading && !this.error;
@@ -444,25 +533,25 @@ export default class Git extends View {
         else return;
         cx.stop_propagation(); cx.notify();
       })
-      // Row 1: what is listed, plus panel controls.
+      // Row 1: what is listed, plus Refresh and Close.
       .child(bar(42)
-        .child(segments("mode", [["history", "History"], ["prs", "Pull requests"]], this.mode, (mode, cx) => this.setMode(mode, cx)))
+        .child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx)))
         .child(div().flex_1())
-        .when(this.mode === "history", e => e.child(button("scope", width < 400 ? "All" : "All branches", cx => { this.all = !this.all; this.limit = 150; this.refresh(cx); cx.notify(); },
-          { selected: this.all, enabled: !this.loading && !this.busy && Boolean(data), tooltip: this.all ? "Showing all branches · show only the current branch" : "Showing the current branch · show all branches" })))
-        .when(this.mode === "prs" && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
+        .when(showFilter && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
         .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy }))
         .when(Boolean(p.overlay || p.dock), e => e.child(button("close-git", "", () => this.closePanel(), { icon: "x", ghost: true, tooltip: "Close Git", enabled: !this.busy }))))
       // Row 2: the branch (switcher; repository in its tooltip) and what can move. The branch picker turns this row into its search field.
       .child(this.mode === "branches" ? this.branchSearch() : bar(40)
-        .child(h_flex().flex_1().min_w(0).items_center()
+        .child(h_flex().flex_1().min_w(0).gap(8).items_center()
           .when(Boolean(data?.head || data?.branch), e => e.child(this.branchSwitch()))
+          .when(this.mode === "history" && Boolean(data?.head), e => e.child(button("scope", width < 400 ? "All" : "All branches", cx => { this.all = !this.all; this.limit = 150; this.refresh(cx); cx.notify(); },
+            { small: true, selected: this.all, enabled: !this.loading && !this.busy, tooltip: this.all ? "Showing all branches · show only the current branch" : "Showing the current branch · show all branches" })))
           .when(!(data?.head || data?.branch), e => e.child(div().min_w(0).truncate().text_size(12).text_color(t.muted).child(this.loading ? "Reading repository…" : repo ? `${repo} · no commits` : "No checkout"))))
         .when(Boolean(data?.upstream), e => e.child(button("pull", data.behind ? String(data.behind) : "", cx => this.ask({ kind: "pull" }, cx), { icon: "pull", enabled: canSync, tooltip: `Pull${data.behind ? ` ${data.behind} incoming ${data.behind === 1 ? "commit" : "commits"}` : ""} from ${data.upstream} · fast-forward only` })))
         .when(Boolean(data?.branch), e => e.child(data.upstream
           ? button("push", data.ahead ? String(data.ahead) : "", cx => this.ask({ kind: "push" }, cx), { icon: "push", enabled: canSync && data.remotes.length > 0, tooltip: data.ahead ? `Push ${data.ahead} outgoing ${data.ahead === 1 ? "commit" : "commits"} to ${data.upstream}` : `Push to ${data.upstream}` })
           : button("push", "Publish", cx => this.ask({ kind: "push" }, cx), { icon: "push", enabled: canSync && data.remotes.length > 0, tooltip: data.remotes.length ? "Publish branch and set its upstream" : "Add a remote before publishing" }))))
-      .when(this.mode === "prs" && width < PR_FILTER_INLINE, e => e.child(bar(40).child(this.prFilter())))
+      .when(showFilter && width < PR_FILTER_INLINE, e => e.child(bar(40).child(this.prFilter())))
       .when(Boolean(error), e => e.child(h_flex().flex_none().px(14).py(7).gap(8).items_start().bg(tint(t.blocked, "1a")).border_b(1).border_color(t.border)
         .child(div().flex_1().min_w(0).pt(2).text_size(12).text_color(t.blocked).child(error))
         .child(button("dismiss-error", "", cx => { this.operationError = null; this.error = null; cx.notify(); }, { small: true, ghost: true, icon: "x", tooltip: "Dismiss" }))))

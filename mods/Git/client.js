@@ -1,4 +1,4 @@
-import { READ, PR_FIELDS, parseLog, parseStatus, parseBranches, slimPR, sameHead, actionArgs } from "./model.js";
+import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs } from "./model.js";
 
 export class GitClient {
   constructor(exec, where) { this.exec = exec; this.where = { ...where }; this.writing = false; }
@@ -40,8 +40,15 @@ export class GitClient {
   }
   async commit(hash) {
     if (!/^[a-f0-9]{40,64}$/.test(hash)) throw new Error("Invalid commit ID.");
-    // A bounded text summary, not a diff; Codewalker remains the review surface.
-    return (await this.git(["show", "--no-renames", "--no-ext-diff", "--format=fuller", "--stat", "--stat-count=30", "--end-of-options", hash, "--"])).slice(0, 18000);
+    // Structured facts, not a diff; Codewalker remains the review surface.
+    const meta = parseCommitMeta(await this.git(["show", "-s", "--decorate=full", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B", "--end-of-options", hash, "--"]));
+    // Merges compare with their first parent, as `git log --first-parent` would show them.
+    const range = meta.parents.length ? [meta.parents[0], hash] : ["--root", hash];
+    const tree = ["diff-tree", "-r", "--no-commit-id", "--no-renames", "--no-ext-diff", "-z"];
+    const [numstat, status] = await Promise.all([this.git([...tree, "--numstat", ...range]), this.git([...tree, "--name-status", ...range])]);
+    const files = parseCommitFiles(numstat, status);
+    return { ...meta, files: files.slice(0, COMMIT_FILES), totalFiles: files.length,
+      additions: files.reduce((n, f) => n + (f.additions || 0), 0), deletions: files.reduce((n, f) => n + (f.deletions || 0), 0) };
   }
   async pr(number) {
     if (!Number.isInteger(number) || number < 1) throw new Error("Invalid pull request.");

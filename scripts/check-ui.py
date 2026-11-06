@@ -92,7 +92,7 @@ def main():
         destination = Path(temp) / "mod"
         for mode, width, extra in [
             ("history", 368, ""),
-            ("history", 1100, 'this.selected={kind:"commit",item:commits[0]}; this.detail="Synthetic commit summary\\n\\n src/main.js | 12 +++++----";'),
+            ("history", 1100, 'this.selected={kind:"commit",item:commits[0]}; this.detail={...commits[0],email:"alex@example.invalid",committer:"Alex",committerTime:commits[0].time,body:"Keep the confirmed checkout.",bodyTruncated:false,files:[{path:"mods/Git/main.js",status:"M",additions:12,deletions:4,binary:false},{path:"docs/history.png",status:"M",additions:null,deletions:null,binary:true}],totalFiles:2,additions:12,deletions:4};'),
             ("prs", 368, ""),
             ("prs", 1100, 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Synthetic **PR description**.",changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};'),
             ("branches", 280, ""),

@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitClient } from "../mods/Git/client.js";
-import { checksSummary, parseStatus } from "../mods/Git/model.js";
+import { checksSummary, parseStatus, prProblem } from "../mods/Git/model.js";
 import { layoutLanes } from "../mods/Git/lanes.js";
 
 const execute = promisify(execFile);
@@ -138,4 +138,43 @@ test("PR checkout revalidates the head and refuses dirty files before executing 
   assert.equal(checkouts, 0);
   await rm(join(f.cwd, "unsaved")); await client.mutate({ kind: "pr", pr }, snapshot);
   assert.equal(checkouts, 1);
+});
+
+test("pull request failures name one actionable cause", () => {
+  assert.equal(prProblem("", [], null).kind, "no-remote");
+  assert.equal(prProblem("no git remotes found", ["origin"], null).kind, "no-remote");
+  // gh's non-GitHub message also mentions `gh auth login`; it must not read as a sign-in problem.
+  assert.equal(prProblem("none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`", ["origin"], null).kind, "not-github");
+  assert.equal(prProblem("X No default remote repository has been set. please run `gh repo set-default`", ["origin", "upstream"], null).kind, "no-default");
+  const auth = prProblem("To get started with GitHub CLI, please run:  gh auth login", ["origin"], "vps");
+  assert.equal(auth.kind, "auth"); assert.match(auth.detail, /on vps/);
+  assert.equal(prProblem("gh could not finish: spawn gh ENOENT", ["origin"], null).kind, "no-gh");
+  const other = prProblem("HTTP 502: Bad Gateway", ["origin"], null);
+  assert.equal(other.kind, "other"); assert.equal(other.raw, "HTTP 502: Bad Gateway");
+});
+
+test("commit details are structured facts, including root, binary, deleted and merge commits", async t => {
+  const f = await fixture(t);
+  const root = await f.commit("a.txt", "one\ntwo\n");
+  const first = await f.client.commit(root);
+  assert.deepEqual(first.parents, []);
+  assert.equal(first.subject, "a.txt"); assert.equal(first.body, "");
+  assert.deepEqual(first.files, [{ path: "a.txt", status: "A", additions: 2, deletions: 0, binary: false }]);
+
+  await writeFile(join(f.cwd, "a.txt"), "one\n"); await writeFile(join(f.cwd, "image.bin"), Buffer.from([0, 1, 2, 0, 255]));
+  await f.git("add", "--", "a.txt", "image.bin");
+  await f.git("commit", "-m", "Subject line", "-m", "Body paragraph with\x1f a separator.");
+  const second = await f.client.commit(await f.git("rev-parse", "HEAD"));
+  assert.equal(second.subject, "Subject line"); assert.equal(second.body, "Body paragraph with\x1f a separator.");
+  assert.deepEqual(second.files.map(x => [x.path, x.status, x.additions, x.deletions, x.binary]), [["a.txt", "M", 0, 1, false], ["image.bin", "A", null, null, true]]);
+  assert.equal(second.deletions, 1);
+
+  await f.git("switch", "-c", "side"); await f.git("rm", "-q", "--", "image.bin"); await f.git("commit", "-m", "Drop image");
+  await f.git("switch", "main"); await f.commit("b.txt");
+  await f.git("merge", "--no-ff", "side", "-m", "Merge side");
+  const merge = await f.client.commit(await f.git("rev-parse", "HEAD"));
+  assert.equal(merge.parents.length, 2);
+  // A merge lists what it brought in relative to its first parent.
+  assert.deepEqual(merge.files.map(x => [x.path, x.status]), [["image.bin", "D"]]);
+  assert.ok(merge.refs.some(r => r.includes("refs/heads/main")));
 });
