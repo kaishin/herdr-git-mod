@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Button, InputState, Input, TextView, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
-import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
+import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, nextCommand, shared, setShared } from "herdr";
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
@@ -219,10 +219,6 @@ export default class Git extends View {
       }
     });
     cx.notify();
-  }
-  closePanel() {
-    if (props()?.overlay) closeOverlay(props().overlay);
-    else if (dockState(props()?.dock)) run("layout.hide", { id: props().dock.panel });
   }
   activate(id, item, cx) {
     if (this.busy) return;
@@ -533,13 +529,12 @@ export default class Git extends View {
         else return;
         cx.stop_propagation(); cx.notify();
       })
-      // Row 1: what is listed, plus Refresh and Close.
+      // Row 1: what is listed, plus Refresh. Esc closes an overlay; the toolbar Git button closes the dock.
       .child(bar(42)
         .child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx)))
         .child(div().flex_1())
         .when(showFilter && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
-        .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy }))
-        .when(Boolean(p.overlay || p.dock), e => e.child(button("close-git", "", () => this.closePanel(), { icon: "x", ghost: true, tooltip: "Close Git", enabled: !this.busy }))))
+        .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy })))
       // Row 2: the branch (switcher; repository in its tooltip) and what can move. The branch picker turns this row into its search field.
       .child(this.mode === "branches" ? this.branchSearch() : bar(40)
         .child(h_flex().flex_1().min_w(0).gap(8).items_center()
