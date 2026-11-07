@@ -97,6 +97,8 @@ def main():
             ("prs", 1100, 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Synthetic **PR description**.",changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};'),
             ("branches", 280, ""),
             ("history", 368, 'this.pending={action:{kind:"push",remote:"origin",target:"refs/heads/main"},snapshot:this.data};'),
+            ("history", 1100, 'this.codewalker=false; this.selected={kind:"commit",item:commits[1]};'),
+            ("history", 1100, 'this.codewalker=true; this.selected={kind:"commit",item:commits[1]};'),
         ]:
             for eager in (False, True):
                 write_fixture(destination, mode, width, extra, eager)
@@ -112,6 +114,11 @@ def main():
                 # when deferred rows are made eager, rather than passing on an empty state.
                 if eager and mode == "history":
                     assert "path stroke" in result.stdout, "Graph paths were not rendered"
+                if "this.codewalker=false" in extra:
+                    assert "Install the Codewalker mod" in result.stdout, "Missing Codewalker must be explained"
+                    assert 'Button "open-diff"' not in result.stdout, "View diff must be hidden without Codewalker"
+                elif "this.codewalker=true" in extra:
+                    assert 'Button "open-diff"' in result.stdout, "View diff must be offered for a commit"
                 if eager and mode == "prs":
                     assert "Keep branch switching" in result.stdout, "Populated PR list was not rendered"
                 if eager and mode == "branches":

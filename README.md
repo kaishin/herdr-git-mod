@@ -9,6 +9,7 @@ A native Git panel that sits beside Codewalker Review. Commit history first; pul
 - Draws the commit DAG with colored lanes, merges, HEAD, branch and tag labels. Load older commits or limit history to the current branch.
 - Lists open PRs for **This repo**, **Mine**, or **Review requested**. Shows CI and review decisions separately; missing checks never count as passing.
 - Opens commit summaries and PR descriptions/checks. **Check out** switches to a PR with `gh pr checkout`, including forks.
+- **View diff** opens the selected commit in Codewalker commit review, in a new pane to the right of the followed pane. Local checkouts only. Without Codewalker in the app home, the button is hidden and the details say to install it; Git never installs or runs Codewalker to detect it.
 - Switches local branches or creates a tracking branch from a remote ref. Branches held by other worktrees are marked and cannot be switched here.
 - Pulls fast-forward only. Pushes only the named branch, without force, follow-tags, or recursive submodule pushes. Unpublished branches offer **Publish**.
 - Follows the focused terminal’s checkout, including remote spaces. A `folder` prop pins a copy to one checkout.
@@ -40,7 +41,7 @@ Or use `content: {"mod":"Git"}` in a personal layout. Optional props:
 
 | Prop | Meaning |
 |---|---|
-| `folder`, `on` | Pin a checkout and its machine; omit to follow focus. |
+| `folder`, `on`, `pane` | Pin a checkout, its machine, and the pane a commit diff opens beside; omit to follow focus. |
 | `framed: true` | Omit the outer card border when embedded in a pane. |
 | `toolbar: true` | Render only the GitHub entry button. Without `dock`, opens a standalone window. |
 | `dock: {panel, stack, child}` | Optional host-supplied node IDs for a docked panel. No layout names or IDs are hardcoded. Put the same prop on the toolbar and panel copies. |
@@ -77,7 +78,7 @@ python3 scripts/check-ui.py       # populated native descriptions and deferred-r
 herdr-app check mods/Git
 ```
 
-Nine behavior tests cover DAG topology, unborn/detached checkouts, dirty/stale/worktree refusal, tracking branches, publish/push/pull/divergence, status parsing, honest CI states, PR preflight, PR load-failure causes, and commit details (root, binary, deleted, merge). Twelve native checks cover virtual/eager rows, narrow/wide views, details, and confirmations. Native screenshots were inspected for history and PRs; a live repository’s history was also observed. A read-only `gh pr list` succeeded against an existing checkout (zero open PRs). No real GitHub checkout/push/pull or pointer-driven interaction test was performed.
+Ten behavior tests cover DAG topology, unborn/detached checkouts, dirty/stale/worktree refusal, tracking branches, publish/push/pull/divergence, status parsing, honest CI states, PR preflight, PR load-failure causes, commit details (root, binary, deleted, merge), and the Codewalker hand-off (installed, absent, unreadable, remote, stale pane). Sixteen native checks cover virtual/eager rows, narrow/wide views, details, the missing-Codewalker state, and confirmations. Native screenshots were inspected for history and PRs; a live repository’s history was also observed. A read-only `gh pr list` succeeded against an existing checkout (zero open PRs). No real GitHub checkout/push/pull or pointer-driven interaction test was performed.
 
 `python3 scripts/check-ui.py --preview history` (or `prs`/`branches`) opens an isolated, non-writing synthetic preview mod. Close that overlay, then run `--clean-preview` to remove it. This creates no layout.
 

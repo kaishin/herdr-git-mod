@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Button, InputState, Input, TextView, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
-import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, nextCommand, shared, setShared } from "herdr";
+import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, nextCommand, shared, setShared, readTextFile, appHome } from "herdr";
+import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "./codewalker.js";
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
@@ -29,9 +30,10 @@ function currentLocation(previous) {
   const pane = panes().find(p => p.pane === f?.pane);
   const cwd = pane?.cwd || f?.cwd;
   const on = f?.pane === null && cwd ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space.machine;
-  if (cwd) return { cwd, on, space: space.id };
-  return previous?.space === space.id ? previous : { cwd: space.folder, on: space.machine, space: space.id };
+  if (cwd) return { cwd, on, space: space.id, pane: pane?.pane || null };
+  return previous?.space === space.id ? previous : { cwd: space.folder, on: space.machine, space: space.id, pane: null };
 }
+function codewalkerHome() { try { return appHome(); } catch { return null; } }
 function openGit(dock) {
   const state = dockState(dock);
   if (state) {
@@ -39,7 +41,7 @@ function openGit(dock) {
     else { run("layout.select", { stack: dock.stack, child: dock.child }); run("layout.show", { id: dock.panel }); }
   } else {
     const where = currentLocation(null);
-    openOverlay({ mod: "Git", kind: "window", key: "git", width: 1100, height: 720, props: { folder: where.cwd, on: where.on } });
+    openOverlay({ mod: "Git", kind: "window", key: "git", width: 1100, height: 720, props: { folder: where.cwd, on: where.on, pane: where.pane } });
   }
 }
 
@@ -55,7 +57,7 @@ export default class Git extends View {
       return;
     }
     this.fixed = Boolean(p.folder);
-    this.where = this.fixed ? { cwd: p.folder, on: p.on || null } : currentLocation(null);
+    this.where = this.fixed ? { cwd: p.folder, on: p.on || null, pane: p.pane || null } : currentLocation(null);
     this.width = p.overlay ? 1100 : 368;
     this.height = 720;
     this.mode = "history";
@@ -65,6 +67,10 @@ export default class Git extends View {
     this.prLimit = 50;
     this.epoch = 0;
     this.detailEpoch = 0;
+    // Codewalker shows commit diffs: true, false, or null while checking.
+    this.codewalker = null;
+    this.codewalkerEpoch = 0;
+    this.openingDiff = false;
     this.prEpoch = 0;
     this.data = null;
     this.prs = null;
@@ -166,7 +172,37 @@ export default class Git extends View {
     if (mode === "branches") this.search.focus();
     cx.notify();
   }
+  checkCodewalker(cx) {
+    const epoch = ++this.codewalkerEpoch;
+    cx.spawn(async cx => {
+      const installed = await codewalkerInstalled(readTextFile, codewalkerHome());
+      if (epoch === this.codewalkerEpoch && installed !== this.codewalker) { this.codewalker = installed; cx.notify(); }
+    });
+  }
+  // Opens the commit in a new Codewalker pane beside the pane this panel follows.
+  // Target, root and ID are fixed now; focus can change while Codewalker is checked again.
+  openCommitDiff(item, cx) {
+    if (this.openingDiff) return;
+    const request = { on: this.where.on, root: this.data?.root, hash: item.hash, pane: reviewTarget(panes(), focused(), this.where.pane)?.pane || null };
+    this.openingDiff = true;
+    const epoch = ++this.codewalkerEpoch;
+    cx.spawn(async cx => {
+      const installed = await codewalkerInstalled(readTextFile, codewalkerHome());
+      if (epoch === this.codewalkerEpoch) this.codewalker = installed;
+      const live = panes().some(p => p.pane === request.pane);
+      const problem = commitReviewProblem({ ...request, installed, pane: live ? request.pane : null });
+      if (problem) this.operationError = problem;
+      else {
+        try { run("pane.split", commitReviewArgs(request)); }
+        catch (e) { this.operationError = `Codewalker did not open: ${e?.message || e}`; }
+      }
+      this.openingDiff = false;
+      cx.notify();
+    });
+    cx.notify();
+  }
   select(item, kind, cx) {
+    if (kind === "commit") this.checkCodewalker(cx);
     this.selected = { item, kind };
     this.detail = null;
     this.detailError = null;
@@ -373,6 +409,11 @@ export default class Git extends View {
         .when(pr, e => e
           .child(button("checkout-pr", "Check out", cx => this.ask({ kind: "pr", pr: item }, cx), { small: true, icon: "git-branch", enabled: !this.busy && !this.error && !this.loading && !this.detailLoading && Boolean(this.detail), tooltip: "Check out this pull request in the current checkout" }))
           .child(button("open-pr", "", cx => { if (/^https:\/\//.test(item.url || "")) cx.open_url(item.url); }, { small: true, icon: "github", enabled: /^https:\/\//.test(item.url || ""), tooltip: "Open pull request on GitHub" })))
+        // Shown only when Codewalker is installed; the files group says how to get it.
+        .when(!pr && this.codewalker === true, e => {
+          const problem = this.openingDiff ? "Opening Codewalker…" : commitReviewProblem({ installed: this.codewalker, on: this.where.on, root: this.data?.root, hash: selected.item.hash, pane: reviewTarget(panes(), focused(), this.where.pane)?.pane });
+          return e.child(button("open-diff", "View diff", cx => this.openCommitDiff(selected.item, cx), { small: true, enabled: !problem, tooltip: problem || "Open this commit's diff in Codewalker, beside the current pane" }));
+        })
         .when(!pr, e => e.child(button("copy-hash", this.copied === selected.item.hash ? "Copied" : "Copy ID", cx => { cx.write_to_clipboard(selected.item.hash); this.copied = selected.item.hash; cx.notify(); }, { small: true, tooltip: `Copy ${selected.item.hash}` })))
         .child(button("close-detail", "", cx => { this.selected = null; this.detail = null; this.detailEpoch++; cx.notify(); }, { small: true, ghost: true, icon: "x", tooltip: "Close details" })))
       .child(v_flex().id(`git-detail-${pr ? selected.item.number : selected.item.hash}`).flex_1().min_h(0).overflow_y_scrollbar().px(14).pt(12).pb(16).gap(14)
@@ -427,6 +468,7 @@ export default class Git extends View {
         .child(h_flex().pb(4).gap(8).items_center().text_size(11)
           .child(div().flex_1().font_semibold().text_color(t.dim).child(detail ? `${detail.totalFiles} ${detail.totalFiles === 1 ? "file" : "files"} changed` : "Changed files"))
           .when(Boolean(detail), e => e.child(div().text_color(t.ansi2).child(`+${detail.additions}`)).child(div().text_color(t.ansi1).child(`−${detail.deletions}`))))
+        .when(this.codewalker === false && !this.where.on, e => e.child(div().pb(4).text_size(11).text_color(t.muted).child("Install the Codewalker mod to see this diff.")))
         .when(commit.parents?.length > 1, e => e.child(div().pb(4).text_size(11).text_color(t.muted).child(`Compared with first parent ${commit.parents[0].slice(0, 7)}.`)))
         .when(this.detailLoading, e => e.child(secondary("Reading changed files…")))
         .when(Boolean(detail) && !files.length, e => e.child(secondary("No file changes.")))

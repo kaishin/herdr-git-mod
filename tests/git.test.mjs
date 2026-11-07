@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { GitClient } from "../mods/Git/client.js";
 import { checksSummary, parseStatus, prProblem } from "../mods/Git/model.js";
 import { layoutLanes } from "../mods/Git/lanes.js";
+import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "../mods/Git/codewalker.js";
 
 const execute = promisify(execFile);
 async function exec(program, args, { cwd } = {}) {
@@ -177,4 +178,33 @@ test("commit details are structured facts, including root, binary, deleted and m
   // A merge lists what it brought in relative to its first parent.
   assert.deepEqual(merge.files.map(x => [x.path, x.status]), [["image.bin", "D"]]);
   assert.ok(merge.refs.some(r => r.includes("refs/heads/main")));
+});
+
+test("commit diffs open in Codewalker only when it is installed, local, and beside a live pane", async () => {
+  const home = "/apps/herdr home/";
+  const reads = [];
+  const files = present => async path => { reads.push(path); return present.some(name => path.endsWith(`/mods/Codewalker/${name}`)) ? "source" : null; };
+  assert.equal(await codewalkerInstalled(files(["main.js", "backend.py"]), home), true);
+  assert.deepEqual(reads.slice(0, 2), ["/apps/herdr home/mods/Codewalker/main.js", "/apps/herdr home/mods/Codewalker/backend.py"]);
+  assert.equal(await codewalkerInstalled(files([]), home), false, "absent");
+  assert.equal(await codewalkerInstalled(files(["main.js"]), home), false, "backend missing");
+  assert.equal(await codewalkerInstalled(async () => { throw new Error("denied"); }, home), false, "read failure");
+  assert.equal(await codewalkerInstalled(files(["main.js", "backend.py"]), null), false, "no app home");
+
+  const panes = [{ pane: "p1", tab: "t1", focused: false }, { pane: "p2", tab: "t1", focused: true }, { pane: "p3", tab: "t2", focused: false }];
+  assert.equal(reviewTarget(panes, { pane: "p2", tab: "t1" }, "p1").pane, "p1", "the followed pane wins over focus");
+  assert.equal(reviewTarget(panes, { pane: "p3", tab: "t2" }, "gone").pane, "p3", "a closed pane falls back to focus");
+  assert.equal(reviewTarget(panes, { pane: null, tab: "t1" }, null).pane, "p2", "a focused layout block falls back to its tab");
+  assert.equal(reviewTarget([], { pane: null, tab: "t1" }, "p1"), null);
+
+  const hash = "a".repeat(40), ok = { installed: true, on: null, root: "/repo", hash, pane: "p1" };
+  assert.equal(commitReviewProblem(ok), null);
+  assert.match(commitReviewProblem({ ...ok, installed: false }), /Install the Codewalker mod/);
+  assert.match(commitReviewProblem({ ...ok, installed: null }), /Checking/);
+  assert.match(commitReviewProblem({ ...ok, on: "studio" }), /local checkouts/, "remote checkouts never route to a same-path local folder");
+  assert.match(commitReviewProblem({ ...ok, on: "studio", installed: false }), /local checkouts/);
+  assert.match(commitReviewProblem({ ...ok, root: "" }), /root/);
+  assert.match(commitReviewProblem({ ...ok, hash: "abc1234" }), /full ID/);
+  assert.match(commitReviewProblem({ ...ok, pane: null }), /No pane/);
+  assert.deepEqual(commitReviewArgs(ok), { direction: "right", pane: "p1", mod: "Codewalker", props: { framed: true, folder: "/repo", scope: "commit", commit: hash } });
 });
