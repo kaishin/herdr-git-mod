@@ -49,7 +49,7 @@ export default class Fixture extends Git {
     this.fixed=true;
     this.where={cwd:"/synthetic/git-panel",on:null};
     this.width=WIDTH; this.height=HEIGHT;
-    this.data={root:this.where.cwd,head:hash(1),branch:"main",upstream:"origin/main",upstreamRemote:"origin",upstreamRef:"refs/heads/main",ahead:2,behind:1,dirty:0,conflicts:0,remotes:["origin"],commits,more:true,
+    this.data={root:this.where.cwd,head:hash(1),branch:"main",upstream:"origin/main",upstreamRemote:"origin",upstreamRef:"refs/heads/main",ahead:2,behind:1,dirty:0,conflicts:0,remotes:["origin"],remoteUrls:{origin:"git@github.com:example/synthetic.git"},commits,more:true,
       branches:[{ref:"refs/heads/main",name:"main",hash:hash(1),upstream:"origin/main"},{ref:"refs/heads/fix/context",name:"fix/context",hash:hash(3)},{ref:"refs/heads/fix/worktrees",name:"fix/worktrees",hash:hash(5),worktree:"/synthetic/other-checkout"},{ref:"refs/remotes/origin/feature/commit-details",name:"origin/feature/commit-details",hash:hash(4),remote:true}]};
     this.graph=layoutLanes(commits); this.prs=prs;
     this.notice="Synthetic preview · no repository operations";
@@ -134,9 +134,11 @@ def main():
                     assert 'Button "open-diff"' not in result.stdout, "View diff must be hidden without Codewalker"
                 elif "this.codewalker=true" in extra:
                     assert 'Button "open-diff"' in result.stdout, "View diff must be offered for a commit"
+                lines = result.stdout.splitlines()
+                at = lambda name: next((i for i, line in enumerate(lines) if f'Button "{name}"' in line), None)
+                assert at("open-github") is not None and "example/synthetic" in result.stdout, "GitHub button must show for a GitHub remote"
+                assert at("open-github") < at("refresh"), "The GitHub button sits just before Refresh"
                 if "expansion=" in extra:
-                    lines = result.stdout.splitlines()
-                    at = lambda name: next(i for i, line in enumerate(lines) if f'Button "{name}"' in line)
                     assert at("refresh") < at("expand"), "Expand must be the last control after Refresh"
                 if "expanded:false" in extra:
                     assert 'Button "expand"' in result.stdout and "Widen to the layout's maximum width (900px)" in result.stdout, "Expand button must show"

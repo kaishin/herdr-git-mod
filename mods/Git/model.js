@@ -62,6 +62,36 @@ export function ago(time) {
   return seconds < 60 ? "now" : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86400)}d`;
 }
 export function tint(color, alpha = "26") { return /^#[a-f\d]{6}/i.test(color) ? color.slice(0, 7) + alpha : color; }
+// `git remote -v`: names in order, with their fetch URLs.
+export function parseRemotes(text) {
+  const names = [], urls = {};
+  for (const line of String(text || "").split("\n")) {
+    const m = /^(\S+)\t(\S+) \((fetch|push)\)$/.exec(line.trim());
+    if (!m) continue;
+    if (!names.includes(m[1])) names.push(m[1]);
+    if (m[3] === "fetch") urls[m[1]] = m[2];
+  }
+  return { names, urls };
+}
+// The https page of a GitHub remote (github.com or a host with "github" in its
+// name), or null. Accepts scp-style, ssh:// and https:// remotes; drops credentials.
+export function githubWebUrl(remote) {
+  const text = String(remote || "").trim();
+  const m = /^(?:https?:\/\/(?:[^@/]+@)?|ssh:\/\/(?:[^@/]+@)?|git:\/\/|[^@/\s]+@)([^/:\s]+)(?::\d+)?[:/]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(text);
+  if (!m || !/github/i.test(m[1])) return null;
+  const host = m[1].toLowerCase() === "ssh.github.com" ? "github.com" : m[1].toLowerCase();
+  return `https://${host}/${m[2]}/${m[3]}`;
+}
+// Which remote "the repository" is: the upstream's, then origin, then the only one.
+export function primaryRemote(data) {
+  const names = data?.remotes || [];
+  if (data?.upstreamRemote && names.includes(data.upstreamRemote)) return data.upstreamRemote;
+  return names.includes("origin") ? "origin" : names.length === 1 ? names[0] : null;
+}
+export function repositoryUrl(data) {
+  const remote = primaryRemote(data);
+  return remote ? githubWebUrl(data.remoteUrls?.[remote]) : null;
+}
 // HEAD is drawn as a ring on the graph, so "HEAD -> main" reads as "main".
 export function refLabel(ref) { return ref.replace(/^HEAD -> /, "").replace(/refs\/(heads|remotes|tags)\//g, ""); }
 export function sameHead(a, b) { return a.head === b.head && a.branch === b.branch && a.upstream === b.upstream; }

@@ -1,4 +1,4 @@
-import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs } from "./model.js";
+import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseRemotes, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs } from "./model.js";
 
 export class GitClient {
   constructor(exec, where) { this.exec = exec; this.where = { ...where }; this.writing = false; }
@@ -18,7 +18,7 @@ export class GitClient {
     const [log, branches, remotes] = await Promise.all([
       status.head ? this.git(["log", "--topo-order", "--decorate=full", `--max-count=${limit + 1}`, "--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s%x00", ...(all ? ["--branches", "--remotes", "--tags", "HEAD"] : ["HEAD"]), "--"]) : "",
       this.git(["for-each-ref", "--sort=-committerdate", "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(worktreepath)%00%(symref)", "refs/heads", "refs/remotes"]),
-      this.git(["remote"]),
+      this.git(["remote", "-v"]),
     ]);
     // Don't display a mixed snapshot if another terminal changed HEAD while reading.
     const after = await this.status();
@@ -29,7 +29,8 @@ export class GitClient {
       const upstream = await this.git(["for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", `refs/heads/${status.branch}`]);
       [upstreamRemote, upstreamRef] = upstream.trim().split("\0");
     }
-    return { ...after, root, commits: commits.slice(0, limit), more: commits.length > limit, branches: parseBranches(branches), remotes: remotes.trim().split("\n").filter(Boolean), upstreamRemote, upstreamRef };
+    const remoteList = parseRemotes(remotes);
+    return { ...after, root, commits: commits.slice(0, limit), more: commits.length > limit, branches: parseBranches(branches), remotes: remoteList.names, remoteUrls: remoteList.urls, upstreamRemote, upstreamRef };
   }
   async prs(filter = "all", limit = 50) {
     const args = ["pr", "list", "--state", "open", "--limit", String(limit + 1), "--json", PR_FIELDS];

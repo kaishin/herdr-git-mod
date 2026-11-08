@@ -14,6 +14,7 @@ A native Git panel for the [Herdr](https://herdr.dev) desktop app. It shows the 
 - **View diff** opens the selected commit in [Codewalker](#dependencies)'s commit review, in a new pane to the right of the followed pane. Local checkouts only.
 - Switches local branches, or creates a tracking branch from a remote ref. Branches held by other worktrees are marked and cannot be switched here.
 - Pulls fast-forward only. Pushes only the named branch, without force, follow-tags or recursive submodule pushes. Unpublished branches offer **Publish**.
+- A GitHub button next to Refresh opens the repository's page on GitHub. It uses the upstream's remote, then `origin`, then a lone remote, and shows only when that remote is on GitHub.
 - Follows the focused terminal's checkout, including remote spaces. A `folder` prop pins a copy to one checkout.
 
 ![Pull requests with synthetic preview data](docs/pull-requests.png)

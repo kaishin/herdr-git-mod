@@ -5,7 +5,7 @@ import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArg
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { dockExpand, RESTORE_TIMEOUT } from "./dock-expand.js";
-import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
+import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
 const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
@@ -598,7 +598,7 @@ export default class Git extends View {
       else this.where = where;
     }
     const data = this.data, width = this.width, wide = width >= 760;
-    const expand = this.expandButton(p, cx);
+    const expand = this.expandButton(p, cx), repoUrl = repositoryUrl(data);
     const showFilter = this.mode === "prs" && (!this.prError || this.prError.kind === "other");
     const repo = (data?.root || this.where.cwd || "").split(/[\\/]/).filter(Boolean).pop();
     const error = this.operationError || this.error;
@@ -634,6 +634,7 @@ export default class Git extends View {
         .child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx)))
         .child(div().flex_1())
         .when(showFilter && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
+        .when(Boolean(repoUrl), e => e.child(button("open-github", "", cx => cx.open_url(repoUrl), { icon: "github", tooltip: `Open ${repoUrl.replace(/^https:\/\//, "")} on GitHub` })))
         .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy }))
         // Expand/Restore is the last control in the row, as in Codewalker.
         .when(Boolean(expand), e => e.child(expand)))

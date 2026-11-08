@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitClient } from "../mods/Git/client.js";
-import { checksSummary, parseStatus, prProblem } from "../mods/Git/model.js";
+import { checksSummary, parseStatus, prProblem, githubWebUrl, parseRemotes, repositoryUrl } from "../mods/Git/model.js";
 import { layoutLanes } from "../mods/Git/lanes.js";
 import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "../mods/Git/codewalker.js";
 
@@ -207,4 +207,32 @@ test("commit diffs open in Codewalker only when it is installed, local, and besi
   assert.match(commitReviewProblem({ ...ok, hash: "abc1234" }), /full ID/);
   assert.match(commitReviewProblem({ ...ok, pane: null }), /No pane/);
   assert.deepEqual(commitReviewArgs(ok), { direction: "right", pane: "p1", mod: "Codewalker", props: { framed: true, folder: "/repo", scope: "commit", commit: hash } });
+});
+
+test("the GitHub button opens the repository page of a GitHub remote only", async t => {
+  for (const [remote, url] of [
+    ["git@github.com:kaishin/herdr-git-mod.git", "https://github.com/kaishin/herdr-git-mod"],
+    ["https://github.com/kaishin/herdr-git-mod.git", "https://github.com/kaishin/herdr-git-mod"],
+    ["https://user:token@github.com/kaishin/herdr-git-mod", "https://github.com/kaishin/herdr-git-mod"],
+    ["ssh://git@ssh.github.com:443/kaishin/herdr-git-mod.git", "https://github.com/kaishin/herdr-git-mod"],
+    ["git@github.example.com:team/app.git", "https://github.example.com/team/app"],
+    ["git@gitlab.com:team/app.git", null],
+    ["/srv/git/app.git", null],
+    ["https://github.com/kaishin", null],
+  ]) assert.equal(githubWebUrl(remote), url, remote);
+  assert.deepEqual(parseRemotes("origin\tgit@github.com:a/b.git (fetch)\norigin\tgit@github.com:a/b.git (push)\nfork\thttps://github.com/c/b (fetch)\nfork\thttps://github.com/c/b (push)\n"),
+    { names: ["origin", "fork"], urls: { origin: "git@github.com:a/b.git", fork: "https://github.com/c/b" } });
+  // The upstream's remote wins, then origin, then a lone remote.
+  const data = { remotes: ["origin", "fork"], remoteUrls: { origin: "git@github.com:a/b.git", fork: "https://github.com/c/b" } };
+  assert.equal(repositoryUrl(data), "https://github.com/a/b");
+  assert.equal(repositoryUrl({ ...data, upstreamRemote: "fork" }), "https://github.com/c/b");
+  assert.equal(repositoryUrl({ remotes: ["fork"], remoteUrls: { fork: "https://github.com/c/b" } }), "https://github.com/c/b");
+  assert.equal(repositoryUrl({ remotes: ["a", "b"], remoteUrls: { a: "git@github.com:x/y", b: "git@github.com:z/y" } }), null);
+  // A real checkout reports its remote URLs.
+  const { git, client, commit } = await fixture(t);
+  await commit("one.txt");
+  await git("remote", "add", "origin", "git@github.com:example/synthetic.git");
+  const snapshot = await client.snapshot();
+  assert.deepEqual(snapshot.remotes, ["origin"]);
+  assert.equal(repositoryUrl(snapshot), "https://github.com/example/synthetic");
 });
