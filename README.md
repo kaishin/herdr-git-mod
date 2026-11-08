@@ -4,6 +4,8 @@ A native Git panel for the [Herdr](https://herdr.dev) desktop app. It shows the 
 
 ![Git: commit graph and commit details](preview.png)
 
+> **No layout included.** This package provides the mod only, with no layout or keybindings. Configure your own Herdr layout to choose where it appears and how it opens ([example](#add-it-to-your-layout)), or open it as a window with `herdr-app do mod.open --name Git`. The screenshots show the Git panel only.
+
 ## What it does
 
 - Draws the commit graph with colored lanes, merges, HEAD, branch and tag labels. Load older commits, or limit history to the current branch.
@@ -37,7 +39,7 @@ Herdr mods are trusted code, not sandboxed. This mod:
 - **Reaches the network:** `gh` contacts the configured GitHub host to read PRs. Pull, push and PR checkout contact the configured Git remotes. Links open in the browser only on a click.
 - **Reads outside its folder:** the checkout's Git metadata, and `mods/Codewalker/main.js` and `backend.py` in the app home (only to detect Codewalker; it never runs or installs it).
 - **Writes:** only through a Git operation you confirm: branch switch, PR checkout, pull or push. It stores no tokens and no files. The toolbar copy adds its dock child to the shared `workspace.panels` list.
-- **Changes the window:** View diff splits a pane. The toolbar button shows or hides its docked panel, or opens a window overlay. It never changes layouts, settings or keys, and it launches no agents.
+- **Changes the window:** View diff splits a pane. The toolbar button shows or hides its docked panel, or opens a window overlay. Expand hides the panel's neighbors in its row and resizes the panel, then Restore undoes exactly that. These are the same layout clicks as dragging or hiding by hand, never layout file edits. The expansion is recorded in the shared `workspace.expanded.v1` value. It never changes layouts, settings or keys, and it launches no agents.
 
 ## Install
 
@@ -75,7 +77,7 @@ Open a standalone window without editing a layout:
 herdr-app do mod.open --name Git
 ```
 
-Or use `content: {"mod":"Git"}` in a personal layout, or open a pane with `pane.split` and `mod: "Git"`. No layout or keybinding ships with this package. Optional props:
+Or use `content: {"mod":"Git"}` in a personal layout, or open a pane with `pane.split` and `mod: "Git"`. Optional props:
 
 | Prop | Meaning |
 |---|---|
@@ -84,7 +86,54 @@ Or use `content: {"mod":"Git"}` in a personal layout, or open a pane with `pane.
 | `toolbar: true` | Render only the Git entry button. Without `dock`, it opens a standalone window. |
 | `dock: {panel, stack, child}` | Host node IDs for a docked panel. Put the same prop on the toolbar copy and the panel copy. No layout names or IDs are hardcoded. |
 
-Commands delivered to visible copies: `Git.history`, `Git.prs`, `Git.branches`, `Git.refresh`. In a focused list, Up and Down select rows, and Enter opens a row or asks to switch a branch. Escape closes the confirmation, then the details, then the branch picker.
+Commands delivered to visible copies: `Git.history`, `Git.prs`, `Git.branches`, `Git.refresh`, and `Git.expand` (the expand button's toggle; only a shown docked copy acts, and no key is bound to it). In a focused list, Up and Down select rows, and Enter opens a row or asks to switch a branch. Escape closes the confirmation, then the details, then the branch picker.
+
+## Add it to your layout
+
+This example adds a 64px **Git** button that shows and hides Git in a side panel. It is the wiring the author uses, cut down to the Git parts.
+
+Edit only a layout of your own in `${HERDR_APP_HOME:-~/.config/herdr-app}/layouts/`. To start from a shipped layout, copy it first with `herdr-app do layout.clone --name main --as mine` (the copy is shown at once). Keep every existing node and mod: add only the blocks below. Every `id` must be unique in the file. Saved layouts apply live.
+
+**1. The button.** Add this block to the `children` of a row, for example the row that holds your `tabs` block, at the position where you want the button:
+
+```json
+{ "id": "git-button", "type": "block", "size": { "px": 64 }, "window_drag": true,
+  "content": { "mod": "Git", "props": { "toolbar": true,
+    "dock": { "panel": "panel", "stack": "panel-body", "child": "git" } } } }
+```
+
+**2. The panel.** The button needs a column that it can show and hide (`panel`), with a `stack` (`panel-body`) inside it. If your layout already has both, add only the `git` block to the stack's `children`. If not, add this column to the row that holds your main `{ "tab": "active" }` block, after that block:
+
+```json
+{ "id": "panel", "type": "column", "hidden": true, "size": { "px": 368 }, "min": 280, "max": 900,
+  "children": [
+    { "id": "panel-body", "type": "stack", "active": "git", "children": [
+      { "id": "git", "type": "block",
+        "content": { "mod": "Git", "props": {
+          "dock": { "panel": "panel", "stack": "panel-body", "child": "git" } } } }
+    ] }
+  ] }
+```
+
+Both Git blocks must carry the same `dock` object:
+
+| Key | Must be |
+|---|---|
+| `panel` | The `id` of the column the button shows and hides |
+| `stack` | The `id` of the `stack` inside that column |
+| `child` | The `id` of the Git block in that stack. That block's `content.mod` must be `Git` |
+
+If one of these IDs is already taken in your layout, pick another and change it everywhere it appears. If the IDs do not match, the button opens Git as a window instead. A click selects the `git` child and shows the panel. When Git is already showing, a click hides the panel. A panel 760px or wider shows details beside the list; a narrower one stacks them below.
+
+### Expand and restore
+
+A docked panel has an expand button at the far right of its top row, after Refresh. It needs the panel column to sit directly in a `row`:
+
+- **Without `max`** on the panel column, Expand hides the panel's visible neighbors in that row (usually your terminals) and lets the panel fill the row. Blocks in other rows, such as a tab bar or sidebar, stay.
+- **With `max`** (900 in the example above), Expand only widens the panel to that `max`, and the tooltip says so. Leave `max` out if you want a full-width panel.
+- **Restore** shows exactly the blocks Expand hid and returns the panel to its previous width. If the panel was not sized, it gets weight 1.
+
+The expansion is kept per layout and survives a restart. It is restored on its own when you hide the panel, or when the panel's stack shows a mod that does not take part. The Codewalker mod takes part and shares the same expansion. If a restore does not take effect within 5 seconds, the button keeps offering Restore and an error says so. After an error, nothing is restored automatically until you click Restore.
 
 ## Write safety
 
@@ -108,7 +157,7 @@ python3 scripts/check-ui.py  # Native render descriptions of populated fixtures
 herdr-app check mods/Git
 ```
 
-Ten behavior tests cover DAG topology, unborn and detached checkouts, refusal for dirty, stale and occupied-worktree checkouts, tracking branches, publish, push, pull and divergence, status parsing, honest CI states, PR preflight, PR load-failure causes, commit details (root, binary, deleted, merge), and the Codewalker hand-off. Sixteen native checks cover virtual and eager rows, narrow and wide views, details, the missing-Codewalker state and confirmations. These checks do not prove pixel layout or pointer interaction. No real GitHub checkout, push or pull was tested.
+Twenty-five tests run. Ten behavior tests cover DAG topology, unborn and detached checkouts, refusal for dirty, stale and occupied-worktree checkouts, tracking branches, publish, push, pull and divergence, status parsing, honest CI states, PR preflight, PR load-failure causes, commit details (root, binary, deleted, merge), and the Codewalker hand-off. Fifteen tests cover the shared expand/restore helper (`mods/Git/dock-expand.js`, identical in Codewalker) against a simulated layout whose commands apply later, as in Herdr. Twenty native checks cover virtual and eager rows, narrow and wide views, details, the missing-Codewalker state, confirmations, and the docked expand and restore buttons. These checks do not prove pixel layout or pointer interaction. No real GitHub checkout, push or pull was tested.
 
 ### Preview image
 

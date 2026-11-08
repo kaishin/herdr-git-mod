@@ -4,6 +4,7 @@ import { exec, props, focused, spaces, panes, theme, settings, layout, run, open
 import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "./codewalker.js";
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
+import { dockExpand, RESTORE_TIMEOUT } from "./dock-expand.js";
 import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
@@ -34,15 +35,30 @@ function currentLocation(previous) {
   return previous?.space === space.id ? previous : { cwd: space.folder, on: space.machine, space: space.id, pane: null };
 }
 function codewalkerHome() { try { return appHome(); } catch { return null; } }
-function openGit(dock) {
+// One per mod copy; the receipt in shared state is the only expansion state.
+const expander = dockExpand({ layout, run, shared, setShared });
+function openGit(dock, cx) {
   const state = dockState(dock);
   if (state) {
-    if (state.on) run("layout.hide", { id: dock.panel });
+    if (state.on) {
+      // Restore first: commands run in order, so the workspace never stays empty.
+      if (expander.state(dock).expanded) { expander.restore(); afterExpansion(cx); }
+      run("layout.hide", { id: dock.panel });
+    }
     else { run("layout.select", { stack: dock.stack, child: dock.child }); run("layout.show", { id: dock.panel }); }
   } else {
     const where = currentLocation(null);
     openOverlay({ mod: MOD, kind: "window", key: "git", width: 1100, height: 720, props: { folder: where.cwd, on: where.on, pane: where.pane } });
   }
+}
+
+// run() only queues, so check again later even if nothing re-renders. One task:
+// each new expand/restore replaces it, so its timeout counts from the latest start.
+let expansionTimer = null;
+function stopExpansionTimer() { expansionTimer?.cancel(); expansionTimer = null; }
+function afterExpansion(cx) {
+  stopExpansionTimer();
+  expansionTimer = cx?.timer?.after(RESTORE_TIMEOUT + 250, cx => { expansionTimer = null; expander.reconcile(); cx.notify(); }) || null;
 }
 
 export default class Git extends View {
@@ -97,6 +113,8 @@ export default class Git extends View {
         if (command === "focus") this.handle.focus();
         if (command === "refresh") this.refresh(cx, true);
         if (["history", "prs", "branches"].includes(command)) this.setMode(command, cx);
+        // Git.expand: the expand button's toggle, for keys and scripts. Docked copies only.
+        if (command === "expand") this.toggleExpansion(cx);
         cx.notify();
       }
     });
@@ -524,15 +542,54 @@ export default class Git extends View {
       .child(h_flex().gap(8).justify_end().child(button("cancel-action", "Cancel", cx => { this.pending = null; cx.notify(); }, { enabled: !this.busy }))
         .child(button("confirm-action", this.busy ? "Working…" : "Confirm", cx => this.perform(cx), { primary: true, enabled: !this.busy })));
   }
+  // Restores an expanded panel that was hidden or now shows another mod. Never
+  // mutates during render: the check is cheap, the commands run in a task.
+  scheduleReconcile(cx) {
+    if (this.reconciling || !expander.needsReconcile()) return;
+    this.reconciling = true;
+    cx.spawn(async cx => {
+      const result = expander.reconcile();
+      this.reconciling = false;
+      if (result === "timeout") this.operationError = "The panel did not restore. Use Restore to try again.";
+      if (result === "restored") stopExpansionTimer();
+      else if (result && result !== "waiting") afterExpansion(cx);
+      if (result && result !== "waiting") cx.notify();
+    });
+  }
+  // Expansion state for this copy, or null: only a docked copy whose own dock matches the layout.
+  expansion() {
+    const p = props() || {};
+    if (this.toolbar || p.overlay || !p.dock || !dockState(p.dock)) return null;
+    const state = expander.state(p.dock);
+    return state.supported ? state : null;
+  }
+  toggleExpansion(cx) {
+    const state = this.expansion(), dock = (props() || {}).dock;
+    if (!state || state.restoring || (!state.expanded && state.reason === "at-max")) return;
+    const error = state.expanded ? expander.restore() : expander.expand(dock, MOD);
+    if (error) this.operationError = error;
+    afterExpansion(cx);
+    cx.notify();
+  }
+  expandButton(p, cx) {
+    const state = this.expansion();
+    if (!state) return null;
+    const max = state.max ? `${state.max}px` : "";
+    const tooltip = state.expanded ? (state.error ? "Restore did not finish · try again" : "Restore panel width")
+      : state.reason === "at-max" ? `Already at the layout's maximum width (${max})`
+      : state.mode === "max" ? `Widen to the layout's maximum width (${max})` : "Expand to fill the workspace";
+    return button("expand", "", cx => this.toggleExpansion(cx), { icon: state.expanded ? "minimize-2" : "maximize-2", tooltip, enabled: !state.restoring && state.reason !== "at-max", selected: state.expanded });
+  }
   render(cx) {
     const t = theme(), p = props() || {};
+    this.scheduleReconcile(cx);
     if (this.toolbar) {
       const on = dockState(p.dock)?.on;
       return h_flex().size_full().pr(10).justify_end().items_center().bg(t.chrome).border_b(1).border_color(t.border)
         .child(h_flex().id("open-git").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(12)
           .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer()
           .hover(s => s.bg(t.hover)).tooltip(on ? "Close Git" : "Git · commits and pull requests").accessibility_label(on ? "Close Git" : "Open Git")
-          .on_mouse_down("left", stop).on_click(() => openGit(p.dock))
+          .on_mouse_down("left", stop).on_click((_e, cx) => openGit(p.dock, cx))
           .child(svg(icon("github")).size(14)).child("Git"));
     }
     if (!this.fixed && !this.busy) {
@@ -541,6 +598,7 @@ export default class Git extends View {
       else this.where = where;
     }
     const data = this.data, width = this.width, wide = width >= 760;
+    const expand = this.expandButton(p, cx);
     const showFilter = this.mode === "prs" && (!this.prError || this.prError.kind === "other");
     const repo = (data?.root || this.where.cwd || "").split(/[\\/]/).filter(Boolean).pop();
     const error = this.operationError || this.error;
@@ -576,7 +634,9 @@ export default class Git extends View {
         .child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx)))
         .child(div().flex_1())
         .when(showFilter && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
-        .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy })))
+        .child(button("refresh", "", cx => this.refresh(cx, true), { icon: "refresh", tooltip: "Refresh Git and pull requests", enabled: !this.loading && !this.prLoading && !this.busy }))
+        // Expand/Restore is the last control in the row, as in Codewalker.
+        .when(Boolean(expand), e => e.child(expand)))
       // Row 2: the branch (switcher; repository in its tooltip) and what can move. The branch picker turns this row into its search field.
       .child(this.mode === "branches" ? this.branchSearch() : bar(40)
         .child(h_flex().flex_1().min_w(0).gap(8).items_center()

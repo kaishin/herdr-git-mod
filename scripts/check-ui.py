@@ -111,6 +111,9 @@ def main():
             ("history", 368, 'this.pending={action:{kind:"push",remote:"origin",target:"refs/heads/main"},snapshot:this.data};'),
             ("history", 1100, 'this.codewalker=false; this.selected={kind:"commit",item:commits[1]};'),
             ("history", 1100, 'this.codewalker=true; this.selected={kind:"commit",item:commits[1]};'),
+            # Docked expand states. Only expansion() is replaced; the button and its tooltip are the real ones.
+            ("history", 368, 'this.expansion=()=>({supported:true,expanded:false,restoring:false,mode:"max",max:900,reason:null,error:null});'),
+            ("history", 368, 'this.expansion=()=>({supported:true,expanded:true,restoring:false,mode:"max",max:900,reason:null,error:null});'),
         ]:
             for eager in (False, True):
                 write_fixture(destination, mode, width, extra, eager)
@@ -131,6 +134,16 @@ def main():
                     assert 'Button "open-diff"' not in result.stdout, "View diff must be hidden without Codewalker"
                 elif "this.codewalker=true" in extra:
                     assert 'Button "open-diff"' in result.stdout, "View diff must be offered for a commit"
+                if "expansion=" in extra:
+                    lines = result.stdout.splitlines()
+                    at = lambda name: next(i for i, line in enumerate(lines) if f'Button "{name}"' in line)
+                    assert at("refresh") < at("expand"), "Expand must be the last control after Refresh"
+                if "expanded:false" in extra:
+                    assert 'Button "expand"' in result.stdout and "Widen to the layout's maximum width (900px)" in result.stdout, "Expand button must show"
+                elif "expanded:true" in extra:
+                    assert 'Button "expand"' in result.stdout and "Restore panel width" in result.stdout, "Restore state must show"
+                else:
+                    assert 'Button "expand"' not in result.stdout, "No expand button outside a dock"
                 if eager and mode == "prs":
                     assert "Keep branch switching" in result.stdout, "Populated PR list was not rendered"
                 if eager and mode == "branches":
