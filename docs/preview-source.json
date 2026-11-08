@@ -1,0 +1,6 @@
+{
+  "source": "herdr-app shot native window capture",
+  "content": "scripts/check-ui.py --preview history --size 900x580: synthetic fixtures, no real repository or GitHub data",
+  "processing": "Cropped to the preview window at 1022,471 1800x1160; pixels outside its 22px rounded corners made transparent; no other changes",
+  "capture": "git-history-capture.png"
+}

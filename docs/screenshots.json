@@ -1,13 +1,11 @@
 {
-  "images": [
-    "history.png",
-    "pull-requests.png"
-  ],
+  "images": {
+    "preview-source.png": "History with commit details, 900x580 window at 2x. Captured 2026-11-08 at commit 8ad70c9 plus the packaging changes. See preview-source.json.",
+    "pull-requests.png": "Pull requests with PR details, 1100x720 window. Captured 2026-11-06 (commit 8156874); cropped to the panel and resized to 1090x710. Its check list predates the current fixture, which now lists two passing checks to match the row."
+  },
   "source": "herdr-app shot native window captures",
   "content": "Synthetic fixtures from scripts/check-ui.py; no real repository or GitHub data",
-  "processing": "Cropped to the preview panel, resized to 1090x710; no compositing",
-  "captureFiles": [
-    "/tmp/herdr-git-history-rendered.png",
-    "/tmp/herdr-git-prs.png"
-  ]
+  "composed": {
+    "preview.png": "scripts/compose-preview.py from docs/preview-source.png"
+  }
 }

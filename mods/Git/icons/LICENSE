@@ -1,4 +1,14 @@
-Icons in this folder are from Lucide 1.31.0 (https://lucide.dev), unchanged.
+check.svg, folder.svg, git-branch.svg, refresh.svg and x.svg are from Lucide 1.31.0
+(https://lucide.dev), unchanged, under the license below.
+
+github.svg adapts the Feather/Lucide "github" outline (simplified path, 1.7
+stroke); the licenses below apply to it. pr.svg, pull.svg and push.svg were
+drawn for this mod in the same stroke style and ship under the repository's
+MIT license. The GitHub mark is a trademark of GitHub, Inc.; it only labels the
+GitHub entry button.
+
+---
+
 
 ISC License
 

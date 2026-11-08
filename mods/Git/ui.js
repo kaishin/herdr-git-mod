@@ -4,7 +4,9 @@ import { theme } from "herdr";
 import { tint } from "./model.js";
 
 export const stop = (_event, cx) => cx.stop_propagation();
-export const icon = name => `mods/Git/icons/${name}.svg`;
+// The installed folder name. Change only this if a name clash forces a rename.
+export const MOD = "Git";
+export const icon = name => `mods/${MOD}/icons/${name}.svg`;
 export const ROW = 48;
 
 // Codewalker's control family: 26px / 22px; labelled ghosts retain their edge.

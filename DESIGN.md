@@ -17,4 +17,4 @@ This is an Operate surface inside Codewalker’s existing visual system, not a n
 - Branch switches and network writes use an inline confirmation, with repository and destination. There is no surprise modal and no silent checkout.
 - List event handlers belong on `on_item_click`, never inside a deferred row renderer. Virtual lists fill a relative parent, with an overlaid scrollbar; a flex-only native list can collapse even when its initial description passes.
 
-Visual evidence: `docs/history.png` and `docs/pull-requests.png`, native captures of the synthetic fixtures in `scripts/check-ui.py`. The real Shizen panel follows the same component implementation. Both were inspected; no browser rendering is involved.
+Visual evidence: `docs/preview-source.png` (history, 900×580, 2026-11-08) and `docs/pull-requests.png` (PRs, 1100×720, 2026-11-06), native captures of the synthetic fixtures in `scripts/check-ui.py`. `preview.png` is composed from the first by `scripts/compose-preview.py`. Both were inspected; no browser rendering is involved.

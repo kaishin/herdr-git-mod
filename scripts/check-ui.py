@@ -41,11 +41,14 @@ export default class Fixture extends Git {
   loadPRs() {}
   perform() {}
   visible() { return false; }
+  // A click in the preview selects without reading Git, and View diff opens nothing.
+  select(item, kind, cx) { this.selected={item,kind}; this.detail=null; cx.notify(); }
+  openCommitDiff() {}
   init(p, cx) {
     super.init(p,cx);
     this.fixed=true;
     this.where={cwd:"/synthetic/git-panel",on:null};
-    this.width=WIDTH; this.height=720;
+    this.width=WIDTH; this.height=HEIGHT;
     this.data={root:this.where.cwd,head:hash(1),branch:"main",upstream:"origin/main",upstreamRemote:"origin",upstreamRef:"refs/heads/main",ahead:2,behind:1,dirty:0,conflicts:0,remotes:["origin"],commits,more:true,
       branches:[{ref:"refs/heads/main",name:"main",hash:hash(1),upstream:"origin/main"},{ref:"refs/heads/fix/context",name:"fix/context",hash:hash(3)},{ref:"refs/heads/fix/worktrees",name:"fix/worktrees",hash:hash(5),worktree:"/synthetic/other-checkout"},{ref:"refs/remotes/origin/feature/commit-details",name:"origin/feature/commit-details",hash:hash(4),remote:true}]};
     this.graph=layoutLanes(commits); this.prs=prs;
@@ -57,22 +60,30 @@ export default class Fixture extends Git {
 }
 '''
 
+# --preview opens with a populated selection, so a capture needs no pointer or key input.
+PREVIEW_STATE = {
+    "history": 'this.codewalker=true; this.selected={kind:"commit",item:commits[0]}; this.detail={...commits[0],email:"alex@example.invalid",committer:"Alex",committerTime:commits[0].time,body:"Keep repository operations attached to the checkout that was confirmed, even when focus moves to another terminal.",bodyTruncated:false,files:[{path:"mods/Git/main.js",status:"M",additions:184,deletions:69,binary:false},{path:"mods/Git/model.js",status:"M",additions:3,deletions:1,binary:false},{path:"tests/git.test.mjs",status:"A",additions:41,deletions:0,binary:false},{path:"docs/history.png",status:"M",additions:null,deletions:null,binary:true}],totalFiles:4,additions:228,deletions:70};',
+    "prs": 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Keep repository operations attached to the checkout that was confirmed.\\n\\n- Refuse local changes before switching.\\n- Reject a stale HEAD.",bodyTruncated:false,changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"},{name:"Native UI",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};',
+    "branches": "",
+}
 
-def write_fixture(destination, mode, width, extra="", eager=False):
+
+def write_fixture(destination, mode, width, extra="", eager=False, height=720):
     destination.mkdir(parents=True, exist_ok=True)
     for file in (ROOT / "mods/Git").glob("*.js"):
         shutil.copy2(file, destination / ("view.js" if file.name == "main.js" else file.name))
-    (destination / "mod.json").write_text('{"place":"none","title":"Git · synthetic preview","overlay":{"kind":"window","width":1100,"height":720}}\n')
+    (destination / "mod.json").write_text(f'{{"place":"none","title":"Git · synthetic preview","overlay":{{"kind":"window","width":{width},"height":{height}}}}}\n')
     # `check` does not enter deferred list rows. Eager rendering exercises those
     # same render callbacks through native controls and PathBuilder, with no stub UI.
     method = 'list(id,rows,height,render) { return v_flex().flex_1().children(rows.map((row,i)=>render(row,i))); }' if eager else ""
-    text = FIXTURE.replace("WIDTH", str(width)).replace("MODE", mode).replace("EXTRA", extra).replace("EAGER", method)
+    text = FIXTURE.replace("WIDTH", str(width)).replace("HEIGHT", str(height)).replace("MODE", mode).replace("EXTRA", extra).replace("EAGER", method)
     (destination / "main.js").write_text(text)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--preview", choices=["history", "prs", "branches"])
+    parser.add_argument("--size", default="1100x720", help="preview window WIDTHxHEIGHT")
     parser.add_argument("--clean-preview", action="store_true")
     args = parser.parse_args()
     if args.clean_preview:
@@ -82,7 +93,8 @@ def main():
     if args.preview:
         if PREVIEW.exists() and not (PREVIEW / ".development-fixture").exists():
             raise SystemExit(f"Refusing to overwrite {PREVIEW}")
-        write_fixture(PREVIEW, args.preview, 1100)
+        width, height = (int(n) for n in args.size.split("x"))
+        write_fixture(PREVIEW, args.preview, width, PREVIEW_STATE[args.preview], height=height)
         (PREVIEW / ".development-fixture").write_text(str(ROOT))
         subprocess.run(["herdr-app", "check", str(PREVIEW)], check=True)
         subprocess.run(["herdr-app", "do", "mod.open", "--name", PREVIEW.name], check=True)

@@ -5,7 +5,7 @@ import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArg
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate } from "./model.js";
-import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW } from "./ui.js";
+import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
 const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
 // Below this width the PR filter takes its own row instead of sharing the mode row.
@@ -21,7 +21,7 @@ function find(node, id) {
 function dockState(dock) {
   if (!dock) return null;
   const panel = find(layout(), dock.panel), stack = find(layout(), dock.stack);
-  if (!panel || !stack?.children?.some(n => n.id === dock.child && n.content?.mod === "Git")) return null;
+  if (!panel || !stack?.children?.some(n => n.id === dock.child && n.content?.mod === MOD)) return null;
   return { on: !panel.hidden && stack.active === dock.child };
 }
 function currentLocation(previous) {
@@ -41,7 +41,7 @@ function openGit(dock) {
     else { run("layout.select", { stack: dock.stack, child: dock.child }); run("layout.show", { id: dock.panel }); }
   } else {
     const where = currentLocation(null);
-    openOverlay({ mod: "Git", kind: "window", key: "git", width: 1100, height: 720, props: { folder: where.cwd, on: where.on, pane: where.pane } });
+    openOverlay({ mod: MOD, kind: "window", key: "git", width: 1100, height: 720, props: { folder: where.cwd, on: where.on, pane: where.pane } });
   }
 }
 
