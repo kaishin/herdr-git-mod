@@ -92,6 +92,17 @@ export function repositoryUrl(data) {
   const remote = primaryRemote(data);
   return remote ? githubWebUrl(data.remoteUrls?.[remote]) : null;
 }
+// A remote whose host is named like GitHub. gh also knows Enterprise hosts by
+// other names, so this is only a first guess until gh answers.
+export function hasGitHubRemote(data) { return Object.values(data?.remoteUrls || {}).some(url => githubWebUrl(url)); }
+export const remotesKey = data => JSON.stringify(data?.remoteUrls || {});
+// After a failed `gh pr list`: true when this checkout has no pull requests to
+// show at all, so the tab is hidden and gh is not asked again for these remotes.
+export function noPullRequests(data, problem) {
+  if (!data?.remotes?.length) return true;
+  if (!problem) return false;
+  return problem.kind === "not-github" || problem.kind === "no-remote" || !hasGitHubRemote(data);
+}
 // HEAD is drawn as a ring on the graph, so "HEAD -> main" reads as "main".
 export function refLabel(ref) { return ref.replace(/^HEAD -> /, "").replace(/refs\/(heads|remotes|tags)\//g, ""); }
 export function sameHead(a, b) { return a.head === b.head && a.branch === b.branch && a.upstream === b.upstream; }

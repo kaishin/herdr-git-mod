@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitClient } from "../mods/Git/client.js";
-import { checksSummary, parseStatus, prProblem, githubWebUrl, parseRemotes, repositoryUrl } from "../mods/Git/model.js";
+import { checksSummary, parseStatus, prProblem, githubWebUrl, parseRemotes, repositoryUrl, hasGitHubRemote, noPullRequests, remotesKey } from "../mods/Git/model.js";
 import { layoutLanes } from "../mods/Git/lanes.js";
 import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "../mods/Git/codewalker.js";
 
@@ -235,4 +235,21 @@ test("the GitHub button opens the repository page of a GitHub remote only", asyn
   const snapshot = await client.snapshot();
   assert.deepEqual(snapshot.remotes, ["origin"]);
   assert.equal(repositoryUrl(snapshot), "https://github.com/example/synthetic");
+});
+
+test("pull requests are hidden only for checkouts that cannot have them", () => {
+  const gh = { remotes: ["origin"], remoteUrls: { origin: "git@github.com:a/b.git" } };
+  const lab = { remotes: ["origin"], remoteUrls: { origin: "git@gitlab.com:a/b.git" } };
+  const corp = { remotes: ["origin"], remoteUrls: { origin: "git@git.corp.example:a/b.git" } };
+  assert.equal(hasGitHubRemote(gh), true);
+  assert.equal(hasGitHubRemote(lab), false);
+  assert.equal(noPullRequests({ remotes: [] }, null), true, "no remote: nothing to show");
+  assert.equal(noPullRequests(gh, null), false);
+  // A GitHub remote keeps the tab, so gh's own problem (sign in, install) is shown there.
+  assert.equal(noPullRequests(gh, prProblem("To get started with GitHub CLI, please run: gh auth login", gh.remotes)), false);
+  assert.equal(noPullRequests(gh, prProblem("gh could not finish: not found", gh.remotes)), false);
+  // Without one, any gh failure hides it; gh's "not a GitHub host" hides it whatever the name.
+  assert.equal(noPullRequests(lab, prProblem("gh could not finish: not found", lab.remotes)), true);
+  assert.equal(noPullRequests(corp, prProblem("none of the git remotes configured for this repository point to a known GitHub host", corp.remotes)), true);
+  assert.notEqual(remotesKey(gh), remotesKey(lab), "a remote change asks gh again");
 });

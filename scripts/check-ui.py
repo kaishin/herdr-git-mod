@@ -111,6 +111,8 @@ def main():
             ("history", 368, 'this.pending={action:{kind:"push",remote:"origin",target:"refs/heads/main"},snapshot:this.data};'),
             ("history", 1100, 'this.codewalker=false; this.selected={kind:"commit",item:commits[1]};'),
             ("history", 1100, 'this.codewalker=true; this.selected={kind:"commit",item:commits[1]};'),
+            # A checkout without a GitHub remote: no History/Pull requests toggle, no GitHub button.
+            ("history", 368, 'this.data={...this.data,remoteUrls:{origin:"git@gitlab.com:team/app.git"}};'),
             # Docked expand states. Only expansion() is replaced; the button and its tooltip are the real ones.
             ("history", 368, 'this.expansion=()=>({supported:true,expanded:false,restoring:false,mode:"max",max:900,reason:null,error:null});'),
             ("history", 368, 'this.expansion=()=>({supported:true,expanded:true,restoring:false,mode:"max",max:900,reason:null,error:null});'),
@@ -136,8 +138,13 @@ def main():
                     assert 'Button "open-diff"' in result.stdout, "View diff must be offered for a commit"
                 lines = result.stdout.splitlines()
                 at = lambda name: next((i for i, line in enumerate(lines) if f'Button "{name}"' in line), None)
-                assert at("open-github") is not None and "example/synthetic" in result.stdout, "GitHub button must show for a GitHub remote"
-                assert at("open-github") < at("refresh"), "The GitHub button sits just before Refresh"
+                if "gitlab.com" in extra:
+                    assert at("open-github") is None, "No GitHub button without a GitHub remote"
+                    assert at("mode-history") is None and at("mode-prs") is None, "No History/Pull requests toggle without pull requests"
+                else:
+                    assert at("open-github") is not None and "example/synthetic" in result.stdout, "GitHub button must show for a GitHub remote"
+                    assert at("open-github") < at("refresh"), "The GitHub button sits just before Refresh"
+                    assert at("mode-history") is not None and at("mode-prs") is not None, "The toggle shows for a GitHub checkout"
                 if "expansion=" in extra:
                     assert at("refresh") < at("expand"), "Expand must be the last control after Refresh"
                 if "expanded:false" in extra:

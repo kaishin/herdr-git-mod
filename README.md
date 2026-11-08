@@ -9,7 +9,7 @@ A native Git panel for the [Herdr](https://herdr.dev) desktop app. It shows the 
 ## What it does
 
 - Draws the commit graph with colored lanes, merges, HEAD, branch and tag labels. Load older commits, or limit history to the current branch.
-- Lists open PRs for **This repo**, **Mine** or **To review**. Shows CI and review decisions separately; missing checks never count as passing.
+- Lists open PRs for **This repo**, **Mine** or **To review**. Shows CI and review decisions separately; missing checks never count as passing. A checkout with no GitHub remote shows history only: the History/Pull requests toggle is hidden and `gh` is not called.
 - Opens commit summaries (message, parents, refs, changed files) and PR descriptions and checks. **Check out** switches to a PR with `gh pr checkout`, including forks.
 - **View diff** opens the selected commit in [Codewalker](#dependencies)'s commit review, in a new pane to the right of the followed pane. Local checkouts only.
 - Switches local branches, or creates a tracking branch from a remote ref. Branches held by other worktrees are marked and cannot be switched here.
@@ -27,7 +27,7 @@ All screenshots are native Herdr captures of synthetic fixtures (`scripts/check-
 |---|---|
 | A recent Herdr desktop app with `gpui-base` virtual lists and `PathBuilder` | The panel UI |
 | `git` | History, status, branches, and every write |
-| GitHub CLI `gh`, signed in (`gh auth login`) | Pull requests and PR checkout. Without it, history and sync still work, and the PR tab says what is missing. |
+| GitHub CLI `gh`, signed in (`gh auth login`) | Pull requests and PR checkout. Without it, history and sync still work. For a GitHub remote, the PR tab says what is missing; for other remotes, the tab is hidden. |
 | Codewalker mod (optional) | **View diff**. Without it, the button is hidden and the details say to install it. |
 
 Remote spaces need `git` and `gh` on that machine. The mod needs no Node runtime, and nothing is downloaded.

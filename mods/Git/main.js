@@ -5,7 +5,7 @@ import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArg
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { dockExpand, RESTORE_TIMEOUT } from "./dock-expand.js";
-import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl } from "./model.js";
+import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl, hasGitHubRemote, remotesKey, noPullRequests } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
 const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
@@ -128,6 +128,8 @@ export default class Git extends View {
     this.client = new GitClient(exec, where);
     this.data = null;
     this.prs = null;
+    // What gh said about these remotes: {key, ok}. ok false hides the PR tab.
+    this.prCheck = null;
     this.prLoading = false;
     this.loading = false;
     this.detailLoading = false;
@@ -160,10 +162,26 @@ export default class Git extends View {
       finally { if (epoch === this.epoch) { this.loading = false; if (prs) this.loadPRs(cx); cx.notify(); } }
     });
   }
+  // The Pull requests tab shows only for a checkout that can have them: a remote
+  // named like GitHub, or one gh accepted. Without one, gh is not asked again.
+  prsShown() {
+    const data = this.data;
+    if (!data?.remotes?.length) return false;
+    if (this.prCheck?.key === remotesKey(data)) return this.prCheck.ok;
+    return hasGitHubRemote(data);
+  }
+  hidePRs(cx) {
+    this.prEpoch++;
+    this.prs = null;
+    this.prError = null;
+    if (this.mode === "prs") this.setMode("history", cx);
+  }
   loadPRs(cx) {
     if (this.busy || this.prLoading || !this.data) return;
-    if (!this.data.remotes.length) { this.prEpoch++; this.prs = null; this.prError = prProblem("", [], this.where.on); cx.notify(); return; }
-    const epoch = ++this.prEpoch, client = this.client, filter = this.filter, remotes = this.data.remotes;
+    if (!this.data.remotes.length) { this.hidePRs(cx); cx.notify(); return; }
+    const data = this.data, key = remotesKey(data);
+    if (this.prCheck?.key === key && !this.prCheck.ok) return;
+    const epoch = ++this.prEpoch, client = this.client, filter = this.filter, remotes = data.remotes;
     this.prLoading = true;
     cx.spawn(async cx => {
       try {
@@ -172,12 +190,20 @@ export default class Git extends View {
         this.prs = result.rows;
         this.prMore = result.more;
         this.prError = null;
-      } catch (e) { if (epoch === this.prEpoch) { this.prs = null; this.prError = prProblem(e.message, remotes, this.where.on); } }
+        this.prCheck = { key, ok: true };
+      } catch (e) {
+        if (epoch !== this.prEpoch) return;
+        const problem = prProblem(e.message, remotes, this.where.on);
+        if (noPullRequests(data, problem)) { this.prCheck = { key, ok: false }; this.prLoading = false; this.hidePRs(cx); return; }
+        this.prCheck = { key, ok: true };
+        this.prs = null;
+        this.prError = problem;
+      }
       finally { if (epoch === this.prEpoch) { this.prLoading = false; cx.notify(); } }
     });
   }
   setMode(mode, cx) {
-    if (this.busy) return;
+    if (this.busy || (mode === "prs" && !this.prsShown())) return;
     this.mode = mode;
     this.cursor = null;
     this.selected = null;
@@ -631,7 +657,8 @@ export default class Git extends View {
       })
       // Row 1: what is listed, plus Refresh. Esc closes an overlay; the toolbar Git button closes the dock.
       .child(bar(42)
-        .child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx)))
+        // Without pull requests there is nothing to switch to, so the toggle goes too.
+        .when(this.prsShown(), e => e.child(segments("mode", [["history", "History"], ["prs", "Pull requests", this.prs && !this.prError ? `${this.prs.length}${this.prMore ? "+" : ""}` : null]], this.mode, (mode, cx) => this.setMode(mode, cx))))
         .child(div().flex_1())
         .when(showFilter && width >= PR_FILTER_INLINE, e => e.child(this.prFilter()))
         .when(Boolean(repoUrl), e => e.child(button("open-github", "", cx => cx.open_url(repoUrl), { icon: "github", tooltip: `Open ${repoUrl.replace(/^https:\/\//, "")} on GitHub` })))
