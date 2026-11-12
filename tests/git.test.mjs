@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitClient } from "../mods/Git/client.js";
-import { checksSummary, parseStatus, prProblem, githubWebUrl, parseRemotes, repositoryUrl, hasGitHubRemote, noPullRequests, remotesKey } from "../mods/Git/model.js";
+import { checksSummary, parseStatus, prProblem, githubWebUrl, parseRemotes, repositoryUrl, hasGitHubRemote, noPullRequests, remotesKey, prLocation, parsePRComments, threadAnchor, PR_COMMENTS_QUERY, imagesAsText } from "../mods/Git/model.js";
 import { layoutLanes } from "../mods/Git/lanes.js";
 import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "../mods/Git/codewalker.js";
 
@@ -252,4 +252,64 @@ test("pull requests are hidden only for checkouts that cannot have them", () => 
   assert.equal(noPullRequests(lab, prProblem("gh could not finish: not found", lab.remotes)), true);
   assert.equal(noPullRequests(corp, prProblem("none of the git remotes configured for this repository point to a known GitHub host", corp.remotes)), true);
   assert.notEqual(remotesKey(gh), remotesKey(lab), "a remote change asks gh again");
+});
+
+test("PR comments merge reviews, conversation and inline threads, newest first", () => {
+  const bot = { __typename: "Bot", login: "codecov" }, sam = { __typename: "User", login: "sam" };
+  const parsed = parsePRComments({
+    reviews: { pageInfo: { hasPreviousPage: false }, nodes: [
+      { author: sam, body: "", state: "APPROVED", submittedAt: "2026-01-05T00:00:00Z", url: "https://github.com/o/r/pull/1#r1" },
+      { author: sam, body: "", state: "COMMENTED", submittedAt: "2026-01-04T00:00:00Z" },
+      { author: sam, body: "Draft", state: "PENDING", submittedAt: null },
+    ] },
+    comments: { pageInfo: { hasPreviousPage: true }, nodes: [
+      { author: null, body: "From a deleted account", createdAt: "2026-01-01T00:00:00Z" },
+      { author: bot, body: "Coverage 80%", createdAt: "2026-01-02T00:00:00Z" },
+      { author: bot, body: "Coverage 81%", createdAt: "2026-01-03T00:00:00Z" },
+      { author: sam, body: "   ", createdAt: "2026-01-06T00:00:00Z" },
+    ] },
+    reviewThreads: { pageInfo: { hasPreviousPage: false }, nodes: [
+      { isResolved: true, isOutdated: false, path: "a.js", line: 12, startLine: 10, diffSide: "RIGHT",
+        comments: { totalCount: 3, nodes: [{ author: sam, body: "Off by one.", createdAt: "2026-01-07T00:00:00Z" }, { author: bot, body: "Fixed?", createdAt: "2026-01-08T00:00:00Z" }] } },
+    ] },
+  });
+  assert.deepEqual(parsed.items.map(c => [c.kind, c.author, c.body]), [
+    ["thread", "sam", "Off by one."], ["review", "sam", ""], ["comment", "codecov", "Coverage 81%"], ["comment", "ghost", "From a deleted account"],
+  ]);
+  const [thread] = parsed.items;
+  assert.equal(thread.anchor, "a.js:10-12"); assert.equal(thread.resolved, true);
+  assert.deepEqual(thread.replies.map(r => [r.author, r.bot]), [["codecov", true]], "Bots keep every thread reply");
+  assert.equal(parsed.truncated, true); assert.equal(parsed.repliesTruncated, true);
+  // A LEFT thread names the old file's lines; a thread without lines names its file.
+  assert.equal(threadAnchor({ path: "b.js", diffSide: "LEFT", line: 50, originalLine: 4 }), "b.js:4");
+  assert.equal(threadAnchor({ path: "c.js" }), "c.js");
+});
+
+test("PR comments ask the PR's own repository through gh api, without a shell", async () => {
+  assert.deepEqual(prLocation("https://GitHub.example.com/team/app.js/pull/42"), { host: "github.example.com", owner: "team", name: "app.js", number: 42 });
+  assert.equal(prLocation("https://github.com/o/r/issues/4"), null);
+  const calls = [];
+  const client = new GitClient(async (program, args) => {
+    calls.push([program, ...args]);
+    return { code: 0, stderr: "", stdout: JSON.stringify({ data: { repository: { pullRequest: { comments: { nodes: [{ author: { login: "a" }, body: "Hi", createdAt: "2026-01-01T00:00:00Z" }] } } } } }) };
+  }, { cwd: "/x" });
+  const result = await client.prComments("https://github.com/o/r/pull/7");
+  assert.equal(result.items[0].body, "Hi");
+  assert.deepEqual(calls[0], ["gh", "api", "graphql", "--hostname", "github.com", "-f", `query=${PR_COMMENTS_QUERY}`, "-f", "o=o", "-f", "n=r", "-F", "num=7"]);
+  await assert.rejects(client.prComments("not a url"), /no GitHub address/);
+  const failing = new GitClient(async () => ({ code: 0, stderr: "", stdout: JSON.stringify({ data: { repository: null }, errors: [{ message: "Could not resolve to a Repository" }] }) }), { cwd: "/x" });
+  await assert.rejects(failing.prComments("https://github.com/o/r/pull/7"), /Could not resolve/);
+});
+
+test("images become linked alt text, because remote images do not load", () => {
+  const camo = "https://camo.githubusercontent.com/f2c1/6874";
+  assert.equal(imagesAsText(`<img src="${camo}" alt="P2 Badge" data-canonical-src="https://img.shields.io/badge/P2-yellow?style=flat" style="max-width: 100%;"> Fix this.`), `[P2 Badge](<${camo}>) Fix this.`);
+  assert.equal(imagesAsText(`<a href="https://ci.example/run/1"><img src="${camo}" alt='Build'></a>`), "[Build](<https://ci.example/run/1>)");
+  assert.equal(imagesAsText("[![Coverage 81%](https://x.test/c.svg)](https://x.test/report)"), "[Coverage 81%](<https://x.test/report>)");
+  assert.equal(imagesAsText('![](https://x.test/shot.png "Screenshot")'), "[image](<https://x.test/shot.png>)");
+  assert.equal(imagesAsText("![Inline](data:image/png;base64,AAAA)"), "Inline", "Only web links stay links");
+  assert.equal(imagesAsText('<img alt="a [b] c" src="https://x.test/i">'), "[a \\[b\\] c](<https://x.test/i>)");
+  const fenced = "```md\n![kept](https://x.test/k.png)\n```\n![gone](https://x.test/g.png)";
+  assert.equal(imagesAsText(fenced), "```md\n![kept](https://x.test/k.png)\n```\n[gone](<https://x.test/g.png>)");
+  assert.equal(parsePRComments({ comments: { nodes: [{ author: { login: "c" }, body: "<img alt=\"P1\" src=\"https://x.test/p1\">", createdAt: "2026-01-01T00:00:00Z" }] } }).items[0].body, "[P1](<https://x.test/p1>)");
 });

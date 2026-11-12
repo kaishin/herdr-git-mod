@@ -1,11 +1,11 @@
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, Button, InputState, Input, TextView, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
+import { h_flex, v_flex, Button, InputState, Input, TextView, v_virtual_list, Scrollbar, VirtualListScrollHandle, h_resizable, v_resizable, resizable_panel } from "gpui-base";
 import { exec, props, focused, spaces, panes, theme, settings, layout, run, openOverlay, nextCommand, shared, setShared, readTextFile, appHome } from "herdr";
 import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArgs } from "./codewalker.js";
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { dockExpand, RESTORE_TIMEOUT } from "./dock-expand.js";
-import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl, hasGitHubRemote, remotesKey, noPullRequests } from "./model.js";
+import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl, reviewStateLabel, hasGitHubRemote, remotesKey, noPullRequests } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
 const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
@@ -13,6 +13,19 @@ const since = time => { const rel = ago(time); return rel === "now" ? "just now"
 const PR_FILTER_INLINE = 500;
 // Three lines: 16px title, 1px, 14px byline, 5px, 16px status, with 8px above and below.
 const PR_ROW = 68;
+// Each comment is a Markdown view; past this many, GitHub holds the rest.
+const COMMENTS_SHOWN = 40;
+// The details size the person last dragged to, per orientation, across restarts.
+// localStorage is per application, so the key carries the mod's name.
+const SPLIT_KEY = "git-mod.split.v1";
+function savedSplit() {
+  try { const value = JSON.parse(localStorage.getItem(SPLIT_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
+  catch { return {}; }
+}
+function saveSplit(side, size) {
+  if (!Number.isFinite(size) || size <= 0) return;
+  try { localStorage.setItem(SPLIT_KEY, JSON.stringify({ ...savedSplit(), [side]: Math.round(size) })); } catch {}
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -75,6 +88,7 @@ export default class Git extends View {
     this.fixed = Boolean(p.folder);
     this.where = this.fixed ? { cwd: p.folder, on: p.on || null, pane: p.pane || null } : currentLocation(null);
     this.width = p.overlay ? 1100 : 368;
+    this.listWidth = this.width;
     this.height = 720;
     this.mode = "history";
     this.filter = "all";
@@ -252,6 +266,14 @@ export default class Git extends View {
     this.detailError = null;
     this.detailLoading = true;
     const epoch = ++this.detailEpoch, client = this.client;
+    // Comments load beside the details, so the description never waits for them.
+    this.comments = kind === "pr" ? { number: item.number, loading: true } : null;
+    if (kind === "pr") cx.spawn(async cx => {
+      let comments;
+      try { comments = { number: item.number, ...await client.prComments(item.url) }; }
+      catch (e) { comments = { number: item.number, error: e.message }; }
+      if (epoch === this.detailEpoch) { this.comments = comments; cx.notify(); }
+    });
     cx.spawn(async cx => {
       try {
         const detail = kind === "commit" ? await client.commit(item.hash) : await client.pr(item.number);
@@ -374,9 +396,9 @@ export default class Git extends View {
               .child(v_flex().flex_1().min_w(0).gap(1)
                 .child(div().truncate().text_size(12).line_height("16px").font_semibold().child(commit.subject))
                 .child(h_flex().gap(6).min_w(0).items_center().line_height("14px")
-                  .when(refs.length > 0, e => e.child(div().min_w(0).max_w(this.width < 560 ? 150 : 300).truncate().text_size(11).text_color(t.accent).tooltip(refs.join(" · ")).child(refs.join(" · "))))
+                  .when(refs.length > 0, e => e.child(div().min_w(0).max_w(this.listWidth < 560 ? 150 : 300).truncate().text_size(11).text_color(t.accent).tooltip(refs.join(" · ")).child(refs.join(" · "))))
                   .child(secondary(`${commit.author} · ${ago(commit.time)}`))))
-              .when(this.width >= 560, e => e.child(div().flex_none().font_family(settings().font_family).text_size(11).text_color(t.dim).child(commit.hash.slice(0, 7)))));
+              .when(this.listWidth >= 560, e => e.child(div().flex_none().font_family(settings().font_family).text_size(11).text_color(t.dim).child(commit.hash.slice(0, 7)))));
         }).min_w(graphWidth + 220))))
       .when(Boolean(data?.more), e => e.child(this.loadMore("more-commits", "Load older commits", cx => { this.limit += 150; this.refresh(cx); cx.notify(); }, !this.loading && !this.busy)));
   }
@@ -445,9 +467,8 @@ export default class Git extends View {
   }
   detailView(wide) {
     const t = theme(), selected = this.selected, pr = selected.kind === "pr", item = this.detail || selected.item;
-    return v_flex().min_h(0).min_w(0).flex_none().border_color(t.border)
-      .when(wide, e => e.w(Math.min(420, this.width * 0.4)).border_l(1))
-      .when(!wide, e => e.h(Math.min(440, Math.max(180, this.height * 0.5))).border_t(1))
+    // Fills its resizable panel; the group's divider is the edge.
+    return v_flex().size_full().min_h(0).min_w(0)
       // One header row: identity, then the actions for this item.
       .child(bar(40).child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12).child(pr ? `Pull request #${selected.item.number}` : `Commit ${selected.item.hash.slice(0, 8)}`))
         .when(pr, e => e
@@ -481,7 +502,48 @@ export default class Git extends View {
             .when(item.bodyTruncated, e => e.child(secondary("Description shortened. Open GitHub for the full text."))))
           .when(item.checksList?.length > 0, e => e.child(v_flex().gap(2)
             .child(div().pb(4).text_size(11).font_semibold().text_color(t.dim).child(item.checksList.length > 80 ? `Checks · first 80 of ${item.checksList.length}` : "Checks"))
-            .children(item.checksList.slice(0, 80).map((check, i) => this.checkRow(check, i)))))));
+            .children(item.checksList.slice(0, 80).map((check, i) => this.checkRow(check, i)))))
+          .child(this.commentsView(selected.item))));
+  }
+  // Reviews, conversation and inline threads, newest first. Read-only: replies happen on GitHub.
+  commentsView(pr) {
+    const t = theme(), c = this.comments?.number === pr.number ? this.comments : null;
+    const items = c?.items || [], shown = items.slice(0, COMMENTS_SHOWN);
+    const title = !c?.items ? "Comments" : !items.length ? "No comments" : `${items.length}${c.truncated ? "+" : ""} ${items.length === 1 ? "comment" : "comments"}`;
+    return v_flex().gap(10)
+      .child(div().text_size(11).font_semibold().text_color(t.dim).child(title))
+      .when(!c || c.loading, e => e.child(secondary("Loading comments…")))
+      .when(Boolean(c?.error), e => e.child(div().text_size(12).text_color(t.blocked).child(`Comments did not load: ${c.error}`)))
+      .children(shown.map((comment, i) => this.commentCard(pr.number, comment, i)))
+      .when(items.length > shown.length || Boolean(c?.truncated || c?.repliesTruncated), e => e.child(secondary(items.length > shown.length
+        ? `Showing the newest ${shown.length} of ${items.length}. Open GitHub for the rest.`
+        : "GitHub has older comments or replies. Open GitHub for all of them.")));
+  }
+  commentCard(number, comment, i) {
+    const t = theme(), thread = comment.kind === "thread", url = /^https:\/\//.test(comment.url || "") ? comment.url : null;
+    const id = `${number}-${i}`, faded = thread && (comment.resolved || comment.outdated);
+    const stateColor = comment.state === "CHANGES_REQUESTED" ? t.ansi1 : comment.state === "APPROVED" ? t.ansi2 : t.muted;
+    const byline = (who, at, bot) => h_flex().min_w(0).gap(6).items_center().text_size(11).line_height("16px")
+      .child(div().min_w(0).truncate().font_semibold().text_size(12).text_color(t.foreground).child(who))
+      .when(bot, e => e.child(pill("bot", t.muted)))
+      .when(Boolean(at), e => e.child(div().flex_none().text_color(t.dim).tooltip(shortDate(Date.parse(at) / 1000)).child(since(at))));
+    const body = (key, entry) => v_flex().gap(2)
+      .when(Boolean(entry.body), e => e.child(TextView.markdown(`git-pr-comment-${key}`, entry.body).selectable(true).w_full().text_size(12).text_color(faded ? t.muted : t.foreground)
+        .on_link_click((link, cx) => { if (/^https?:\/\//.test(link)) cx.open_url(link); })))
+      .when(Boolean(entry.bodyTruncated), e => e.child(secondary("Comment shortened. Open GitHub for the full text.")));
+    return v_flex().id(`comment-${id}`).gap(6).pt(10).border_t(1).border_color(t.border)
+      .child(h_flex().min_w(0).gap(8).items_center()
+        .child(div().flex_1().min_w(0).child(byline(comment.author, comment.createdAt, comment.bot)))
+        .when(comment.kind === "review", e => e.child(pill(reviewStateLabel(comment.state), stateColor)))
+        .when(Boolean(url), e => e.child(button(`open-comment-${id}`, "", cx => cx.open_url(url), { small: true, ghost: true, icon: "github", tooltip: "Open comment on GitHub" }))))
+      // An inline thread names its place in the diff, and whether it still applies.
+      .when(thread, e => e.child(h_flex().min_w(0).gap(6).items_center()
+        .child(div().min_w(0).truncate().font_family(settings().font_family).text_size(11).text_color(t.muted).tooltip(comment.anchor).child(comment.anchor))
+        .when(comment.resolved, e => e.child(pill("Resolved", t.ansi2)))
+        .when(comment.outdated, e => e.child(pill("Outdated", t.muted)))))
+      .child(body(id, comment))
+      .when(thread && comment.replies?.length > 0, e => e.child(v_flex().gap(8).ml(2).pl(10).border_l(2).border_color(t.border)
+        .children(comment.replies.map((reply, r) => v_flex().gap(2).child(byline(reply.author, reply.createdAt, reply.bot)).child(body(`${id}-${r}`, reply))))));
   }
   // What the commit says, who made it, where it sits, and what it touched. The list row
   // already holds the subject and author, so those show at once; files follow.
@@ -567,6 +629,27 @@ export default class Git extends View {
         .child(secondary(`${snapshot.root}${this.where.on ? ` · ${this.where.on}` : ""}`)))
       .child(h_flex().gap(8).justify_end().child(button("cancel-action", "Cancel", cx => { this.pending = null; cx.notify(); }, { enabled: !this.busy }))
         .child(button("confirm-action", this.busy ? "Working…" : "Confirm", cx => this.perform(cx), { primary: true, enabled: !this.busy })));
+  }
+  // The list, and the details beside it (760px+) or below it, split by a draggable divider.
+  // Beside, the list keeps a sidebar's width and the details take the rest, as in any
+  // list-detail view. Below, the details keep their height and the list takes the rest.
+  // The dragged size is saved per orientation; a saved size shrinks to leave the other side room.
+  body(wide) {
+    const split = Boolean(this.selected) && this.mode !== "branches";
+    const saved = savedSplit(), pane = child => v_flex().size_full().min_h(0).min_w(0).child(child);
+    const fit = (value, fallback, min, room) => value > 0 ? Math.max(min, Math.min(value, room)) : fallback;
+    // Rows lay out for the width they get, so set it before the list renders.
+    this.listWidth = split && wide ? fit(Number(saved.list), Math.max(300, Math.min(420, this.width * 0.34)), 260, this.width - 360) : this.width;
+    const list = this.mode === "prs" ? this.prList() : this.mode === "branches" ? this.branches() : this.history();
+    if (!split) return v_flex().flex_1().min_h(0).min_w(0).child(list);
+    const group = wide
+      ? h_resizable("git-list-beside").on_resize((sizes, cx) => { saveSplit("list", sizes[0]); cx.notify(); })
+        .child(resizable_panel().size(this.listWidth).size_range(260).child(pane(list)))
+        .child(resizable_panel().size_range(360).child(pane(this.detailView(wide))))
+      : v_resizable("git-details-below").on_resize((sizes, _cx) => saveSplit("below", sizes[1]))
+        .child(resizable_panel().size_range(96).child(pane(list)))
+        .child(resizable_panel().size(fit(Number(saved.below), Math.min(440, Math.max(180, this.height * 0.5)), 120, this.height - 210)).size_range(120).child(pane(this.detailView(wide))));
+    return div().flex_1().min_h(0).min_w(0).relative().child(group.absolute().inset_0());
   }
   // Restores an expanded panel that was hidden or now shows another mod. Never
   // mutates during render: the check is cheap, the commands run in a task.
@@ -681,9 +764,7 @@ export default class Git extends View {
         .child(div().flex_1().min_w(0).pt(2).text_size(12).text_color(t.blocked).child(error))
         .child(button("dismiss-error", "", cx => { this.operationError = null; this.error = null; cx.notify(); }, { small: true, ghost: true, icon: "x", tooltip: "Dismiss" }))))
       .when(Boolean(this.notice), e => e.child(div().flex_none().px(14).py(7).text_size(11).text_color(t.ansi2).border_b(1).border_color(t.border).child(this.notice)))
-      .child((wide ? h_flex().items_stretch() : v_flex()).flex_1().min_h(0).min_w(0)
-        .child(this.mode === "prs" ? this.prList() : this.mode === "branches" ? this.branches() : this.history())
-        .when(Boolean(this.selected) && this.mode !== "branches", e => e.child(this.detailView(wide))))
+      .child(this.body(wide))
       .when(Boolean(this.pending), e => e.child(this.confirmation()))
       .child(h_flex().h(26).flex_none().px(14).gap(8).items_center().border_t(1).border_color(t.border).text_size(11)
         .child(div().size(6).flex_none().rounded_full().bg(error ? t.blocked : this.loading || this.busy ? t.working : t.idle))

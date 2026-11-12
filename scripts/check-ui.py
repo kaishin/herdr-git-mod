@@ -63,7 +63,7 @@ export default class Fixture extends Git {
 # --preview opens with a populated selection, so a capture needs no pointer or key input.
 PREVIEW_STATE = {
     "history": 'this.codewalker=true; this.selected={kind:"commit",item:commits[0]}; this.detail={...commits[0],email:"alex@example.invalid",committer:"Alex",committerTime:commits[0].time,body:"Keep repository operations attached to the checkout that was confirmed, even when focus moves to another terminal.",bodyTruncated:false,files:[{path:"mods/Git/main.js",status:"M",additions:184,deletions:69,binary:false},{path:"mods/Git/model.js",status:"M",additions:3,deletions:1,binary:false},{path:"tests/git.test.mjs",status:"A",additions:41,deletions:0,binary:false},{path:"docs/history.png",status:"M",additions:null,deletions:null,binary:true}],totalFiles:4,additions:228,deletions:70};',
-    "prs": 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Keep repository operations attached to the checkout that was confirmed.\\n\\n- Refuse local changes before switching.\\n- Reject a stale HEAD.",bodyTruncated:false,changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"},{name:"Native UI",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};',
+    "prs": 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Keep repository operations attached to the checkout that was confirmed.\\n\\n- Refuse local changes before switching.\\n- Reject a stale HEAD.",bodyTruncated:false,changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"},{name:"Native UI",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};this.comments={number:43,truncated:false,items:[{kind:"thread",author:"sam",bot:false,body:"This should **revalidate** the head before the switch.",createdAt:new Date(Date.now()-5400000).toISOString(),url:"https://github.com/example/synthetic/pull/43#discussion_r1",anchor:"mods/Git/client.js:88-92",resolved:false,outdated:false,replies:[{author:"alex",bot:false,body:"Done in the next commit.",createdAt:new Date(Date.now()-3600000).toISOString(),url:""}]},{kind:"review",author:"river",bot:false,body:"",state:"APPROVED",createdAt:new Date(Date.now()-7200000).toISOString(),url:"https://github.com/example/synthetic/pull/43#pullrequestreview-1"},{kind:"comment",author:"ci-reporter",bot:true,body:"Synthetic coverage report: 82%.",createdAt:new Date(Date.now()-86400000).toISOString(),url:""}]};',
     "branches": "",
 }
 
@@ -106,7 +106,8 @@ def main():
             ("history", 368, ""),
             ("history", 1100, 'this.selected={kind:"commit",item:commits[0]}; this.detail={...commits[0],email:"alex@example.invalid",committer:"Alex",committerTime:commits[0].time,body:"Keep the confirmed checkout.",bodyTruncated:false,files:[{path:"mods/Git/main.js",status:"M",additions:12,deletions:4,binary:false},{path:"docs/history.png",status:"M",additions:null,deletions:null,binary:true}],totalFiles:2,additions:12,deletions:4};'),
             ("prs", 368, ""),
-            ("prs", 1100, 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Synthetic **PR description**.",changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};'),
+            ("prs", 1100, 'this.selected={kind:"pr",item:prs[0]}; this.detail={...prs[0],body:"Synthetic **PR description**.",changedFiles:3,additions:42,deletions:8,checksList:[{name:"Unit tests",state:"SUCCESS",url:"https://github.com/example/synthetic"}]};this.comments={number:43,truncated:false,items:[{kind:"thread",author:"sam",bot:false,body:"This should **revalidate** the head before the switch.",createdAt:new Date(Date.now()-5400000).toISOString(),url:"https://github.com/example/synthetic/pull/43#discussion_r1",anchor:"mods/Git/client.js:88-92",resolved:false,outdated:false,replies:[{author:"alex",bot:false,body:"Done in the next commit.",createdAt:new Date(Date.now()-3600000).toISOString(),url:""}]},{kind:"review",author:"river",bot:false,body:"",state:"APPROVED",createdAt:new Date(Date.now()-7200000).toISOString(),url:"https://github.com/example/synthetic/pull/43#pullrequestreview-1"},{kind:"comment",author:"ci-reporter",bot:true,body:"Synthetic coverage report: 82%.",createdAt:new Date(Date.now()-86400000).toISOString(),url:""}]};'),
+            ("prs", 368, 'this.selected={kind:"pr",item:prs[1]}; this.detail={...prs[1],body:"",changedFiles:1,additions:1,deletions:0,checksList:[]}; this.comments={number:44,error:"HTTP 502"};'),
             ("branches", 280, ""),
             ("history", 368, 'this.pending={action:{kind:"push",remote:"origin",target:"refs/heads/main"},snapshot:this.data};'),
             ("history", 1100, 'this.codewalker=false; this.selected={kind:"commit",item:commits[1]};'),
@@ -131,6 +132,10 @@ def main():
                 # when deferred rows are made eager, rather than passing on an empty state.
                 if eager and mode == "history":
                     assert "path stroke" in result.stdout, "Graph paths were not rendered"
+                if "this.comments={number:43" in extra:
+                    assert 'Button "open-comment-43-0"' in result.stdout, "PR comments must render with their GitHub link"
+                if "this.comments={number:44" in extra:
+                    assert "Comments did not load" in result.stdout, "A comment failure must be stated"
                 if "this.codewalker=false" in extra:
                     assert "Install the Codewalker mod" in result.stdout, "Missing Codewalker must be explained"
                     assert 'Button "open-diff"' not in result.stdout, "View diff must be hidden without Codewalker"

@@ -1,4 +1,4 @@
-import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseRemotes, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs } from "./model.js";
+import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseRemotes, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs, PR_COMMENTS_QUERY, prLocation, parsePRComments, imagesAsText } from "./model.js";
 
 export class GitClient {
   constructor(exec, where) { this.exec = exec; this.where = { ...where }; this.writing = false; }
@@ -54,7 +54,18 @@ export class GitClient {
   async pr(number) {
     if (!Number.isInteger(number) || number < 1) throw new Error("Invalid pull request.");
     const pr = JSON.parse(await this.command("gh", ["pr", "view", String(number), "--json", `${PR_FIELDS},body,mergeable,mergeStateStatus,additions,deletions,changedFiles`]));
-    return { ...slimPR(pr), body: (pr.body || "").slice(0, 12000), bodyTruncated: (pr.body || "").length > 12000, checksList: (pr.statusCheckRollup || []).map(c => ({ name: c.name || c.context || "Check", state: c.conclusion || c.state || c.status || "UNKNOWN", url: c.detailsUrl || c.targetUrl })) };
+    const body = imagesAsText(pr.body);
+    return { ...slimPR(pr), body: body.slice(0, 12000), bodyTruncated: body.length > 12000, checksList: (pr.statusCheckRollup || []).map(c => ({ name: c.name || c.context || "Check", state: c.conclusion || c.state || c.status || "UNKNOWN", url: c.detailsUrl || c.targetUrl })) };
+  }
+  // Reviews, conversation and inline threads. The PR's URL names its repository, so a
+  // fork remote or a second default never changes which PR is read.
+  async prComments(url) {
+    const at = prLocation(url);
+    if (!at) throw new Error("This pull request has no GitHub address.");
+    const out = JSON.parse(await this.command("gh", ["api", "graphql", "--hostname", at.host, "-f", `query=${PR_COMMENTS_QUERY}`, "-f", `o=${at.owner}`, "-f", `n=${at.name}`, "-F", `num=${at.number}`]));
+    const pr = out?.data?.repository?.pullRequest;
+    if (!pr) throw new Error(out?.errors?.[0]?.message || "GitHub returned no pull request.");
+    return parsePRComments(pr);
   }
   async mutate(action, snapshot) {
     if (this.writing) throw new Error("Another Git operation is still running.");

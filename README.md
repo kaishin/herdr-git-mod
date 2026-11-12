@@ -11,6 +11,7 @@ A native Git panel for the [Herdr](https://herdr.dev) desktop app. It shows the 
 - Draws the commit graph with colored lanes, merges, HEAD, branch and tag labels. Load older commits, or limit history to the current branch.
 - Lists open PRs for **This repo**, **Mine** or **To review**. Shows CI and review decisions separately; missing checks never count as passing. A checkout with no GitHub remote shows history only: the History/Pull requests toggle is hidden and `gh` is not called.
 - Opens commit summaries (message, parents, refs, changed files) and PR descriptions and checks. **Check out** switches to a PR with `gh pr checkout`, including forks.
+- Shows PR comments below the checks, newest first: reviews with their verdict, conversation comments, and inline review threads with file and line, replies, and Resolved/Outdated marks. Each bot keeps only its newest summary post. Read-only: reply on GitHub through each comment's link. Herdr does not load remote images, so an image in a comment or description shows as its alt text, linked to the image or to the link around it.
 - **View diff** opens the selected commit in [Codewalker](#dependencies)'s commit review, in a new pane to the right of the followed pane. Local checkouts only.
 - Switches local branches, or creates a tracking branch from a remote ref. Branches held by other worktrees are marked and cannot be switched here.
 - Pulls fast-forward only. Pushes only the named branch, without force, follow-tags or recursive submodule pushes. Unpublished branches offer **Publish**.
@@ -37,7 +38,7 @@ Remote spaces need `git` and `gh` on that machine. The mod needs no Node runtime
 Herdr mods are trusted code, not sandboxed. This mod:
 
 - **Runs programs:** `git` and `gh`, through Herdr's `exec`, with argument lists and no shell. Git hooks and credential helpers can run as Git normally runs them.
-- **Reaches the network:** `gh` contacts the configured GitHub host to read PRs. Pull, push and PR checkout contact the configured Git remotes. Links open in the browser only on a click.
+- **Reaches the network:** `gh` contacts the configured GitHub host to read PRs and their comments (`gh api graphql`, read-only queries). Pull, push and PR checkout contact the configured Git remotes. Links open in the browser only on a click.
 - **Reads outside its folder:** the checkout's Git metadata, and `mods/Codewalker/main.js` and `backend.py` in the app home (only to detect Codewalker; it never runs or installs it).
 - **Writes:** only through a Git operation you confirm: branch switch, PR checkout, pull or push. It stores no tokens and no files. The toolbar copy adds its dock child to the shared `workspace.panels` list.
 - **Changes the window:** View diff splits a pane. The toolbar button shows or hides its docked panel, or opens a window overlay. Expand hides the panel's neighbors in its row and resizes the panel, then Restore undoes exactly that. These are the same layout clicks as dragging or hiding by hand, never layout file edits. The expansion is recorded in the shared `workspace.expanded.v1` value. It never changes layouts, settings or keys, and it launches no agents.

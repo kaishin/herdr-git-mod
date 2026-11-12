@@ -163,3 +163,77 @@ export function shortDate(time) {
   const d = new Date(time * 1000), pad = n => String(n).padStart(2, "0");
   return Number.isFinite(d.getTime()) ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : "";
 }
+
+// PR comments, read the way herdr-reviewr reads them: submitted reviews, conversation
+// comments and inline review threads in one GraphQL query, newest first.
+export const COMMENT_BODY = 6000;
+export const PR_COMMENTS_QUERY = "query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){pullRequest(number:$num){"
+  + "reviews(last:100){pageInfo{hasPreviousPage} nodes{author{__typename login} body state submittedAt url}} "
+  + "comments(last:100){pageInfo{hasPreviousPage} nodes{author{__typename login} body createdAt url}} "
+  + "reviewThreads(last:100){pageInfo{hasPreviousPage} nodes{isResolved isOutdated path line startLine originalLine originalStartLine diffSide "
+  + "comments(first:50){totalCount nodes{author{__typename login} body createdAt url}}}}}}}";
+// Host, owner, name and number from a PR's https URL, so gh asks the PR's own repository.
+export function prLocation(url) {
+  const m = /^https:\/\/([^/\s]+)\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#]|$)/.exec(String(url || ""));
+  return m ? { host: m[1].toLowerCase(), owner: m[2], name: m[3], number: Number(m[4]) } : null;
+}
+// Herdr's Markdown view leaves a blank gap for remote images, and a mod cannot fetch
+// image bytes. Each image becomes its alt text, linked to where it pointed: the
+// surrounding link if it had one, else the image itself. Code blocks stay as written.
+const attr = (tag, name) => (new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(tag) || []).slice(1).find(v => v !== undefined) || "";
+const linkText = alt => (String(alt).replace(/\s+/g, " ").trim() || "image").replace(/[[\]\\]/g, "\\$&");
+const linkTo = (alt, url) => /^https?:\/\//i.test(url) ? `[${linkText(alt)}](<${url.replace(/[<>\s]/g, encodeURIComponent)}>)` : linkText(alt);
+export function imagesAsText(markdown) {
+  return String(markdown || "").split(/(^ {0,3}(?:```|~~~)[^\n]*\n[\s\S]*?(?:^ {0,3}(?:```|~~~)[ \t]*$|(?![\s\S])))/m).map((part, i) => i % 2 ? part : part
+    .replace(/<a\s[^>]*>\s*(<img\b[^>]*>)\s*<\/a>/gi, (link, img) => linkTo(attr(img, "alt"), attr(link, "href") || attr(img, "src")))
+    .replace(/<img\b[^>]*>/gi, img => linkTo(attr(img, "alt"), attr(img, "src")))
+    .replace(/\[!\[([^\]]*)\]\(\s*<?[^)\s>]*>?(?:\s+"[^"]*")?\s*\)\]\(\s*<?([^)\s>]*)>?(?:\s+"[^"]*")?\s*\)/g, (_m, alt, href) => linkTo(alt, href))
+    .replace(/!\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+"[^"]*")?\s*\)/g, (_m, alt, src) => linkTo(alt, src))).join("");
+}
+// GraphQL gives bots their bare login with __typename Bot; REST adds "[bot]".
+const person = author => ({ author: author?.login || "ghost", bot: author?.__typename === "Bot" || /\[bot\]$/.test(author?.login || "") });
+const text = body => { const s = imagesAsText(String(body || "").trim()).trim(); return { body: s.slice(0, COMMENT_BODY), bodyTruncated: s.length > COMMENT_BODY }; };
+// A thread's new-side range, else its original one; a LEFT thread always uses the original.
+export function threadLines(t) {
+  const pick = (start, end) => start == null && end == null ? null : { start: start ?? end, end: end ?? start };
+  const original = pick(t.originalStartLine, t.originalLine);
+  if (t.diffSide === "LEFT" && original) return original;
+  return pick(t.startLine, t.line) || original;
+}
+export function threadAnchor(t) {
+  const lines = threadLines(t);
+  if (!lines) return t.path || "";
+  const [lo, hi] = [Math.min(lines.start, lines.end), Math.max(lines.start, lines.end)];
+  return `${t.path}:${lo === hi ? lo : `${lo}-${hi}`}`;
+}
+export function parsePRComments(pr) {
+  const out = [], more = conn => Boolean(conn?.pageInfo?.hasPreviousPage);
+  for (const r of pr?.reviews?.nodes || []) {
+    // A pending review is the viewer's unsent draft. An empty comment-only review says nothing.
+    if (!r || r.state === "PENDING" || (!String(r.body || "").trim() && !["APPROVED", "CHANGES_REQUESTED"].includes(r.state))) continue;
+    out.push({ kind: "review", ...person(r.author), ...text(r.body), state: r.state, createdAt: r.submittedAt || "", url: r.url || "" });
+  }
+  for (const c of pr?.comments?.nodes || []) {
+    if (!c || !String(c.body || "").trim()) continue;
+    out.push({ kind: "comment", ...person(c.author), ...text(c.body), createdAt: c.createdAt || "", url: c.url || "" });
+  }
+  let repliesTruncated = false;
+  for (const t of pr?.reviewThreads?.nodes || []) {
+    const nodes = (t?.comments?.nodes || []).filter(n => n && String(n.body || "").trim());
+    if (!nodes.length) continue;
+    const [root, ...replies] = nodes;
+    if ((t.comments.totalCount || 0) > t.comments.nodes.length) repliesTruncated = true;
+    out.push({ kind: "thread", ...person(root.author), ...text(root.body), createdAt: root.createdAt || "", url: root.url || "",
+      path: t.path || "", anchor: threadAnchor(t), resolved: Boolean(t.isResolved), outdated: Boolean(t.isOutdated),
+      replies: replies.map(n => ({ ...person(n.author), ...text(n.body), createdAt: n.createdAt || "", url: n.url || "" })) });
+  }
+  // Bots repost status summaries: keep each bot's newest review or comment. Threads stay.
+  const newest = new Map();
+  for (const c of out) if (c.bot && c.kind !== "thread" && c.createdAt > (newest.get(c.author) || "")) newest.set(c.author, c.createdAt);
+  const items = out.filter(c => !c.bot || c.kind === "thread" || (c.kind === "review" && !c.createdAt) || newest.get(c.author) === c.createdAt);
+  items.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return { items, truncated: more(pr?.reviews) || more(pr?.comments) || more(pr?.reviewThreads), repliesTruncated };
+}
+export function reviewStateLabel(state) {
+  return { APPROVED: "Approved", CHANGES_REQUESTED: "Changes requested", COMMENTED: "Reviewed", DISMISSED: "Dismissed" }[state] || "Reviewed";
+}
