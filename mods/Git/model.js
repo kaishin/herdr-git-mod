@@ -82,11 +82,12 @@ export function githubWebUrl(remote) {
   const host = m[1].toLowerCase() === "ssh.github.com" ? "github.com" : m[1].toLowerCase();
   return `https://${host}/${m[2]}/${m[3]}`;
 }
-// Which remote "the repository" is: the upstream's, then origin, then the only one.
+// Repository scope is an explicit selection, then origin, then the first remote.
+// Branch tracking and gh defaults never select the PR repository.
 export function primaryRemote(data) {
   const names = data?.remotes || [];
-  if (data?.upstreamRemote && names.includes(data.upstreamRemote)) return data.upstreamRemote;
-  return names.includes("origin") ? "origin" : names.length === 1 ? names[0] : null;
+  if (names.includes(data?.selectedRemote)) return data.selectedRemote;
+  return names.includes("origin") ? "origin" : names[0] || null;
 }
 export function repositoryUrl(data) {
   const remote = primaryRemote(data);
@@ -95,12 +96,14 @@ export function repositoryUrl(data) {
 // A remote whose host is named like GitHub. gh also knows Enterprise hosts by
 // other names, so this is only a first guess until gh answers.
 export function hasGitHubRemote(data) { return Object.values(data?.remoteUrls || {}).some(url => githubWebUrl(url)); }
-export const remotesKey = data => JSON.stringify(data?.remoteUrls || {});
+export const remotesKey = data => JSON.stringify([data?.selectedRemote || primaryRemote(data), data?.remoteUrls || {}]);
 // After a failed `gh pr list`: true when this checkout has no pull requests to
 // show at all, so the tab is hidden and gh is not asked again for these remotes.
 export function noPullRequests(data, problem) {
   if (!data?.remotes?.length) return true;
   if (!problem) return false;
+  // Keep the selector available if another remote could supply PRs.
+  if (data.remotes.length > 1 && hasGitHubRemote(data)) return false;
   return problem.kind === "not-github" || problem.kind === "no-remote" || !hasGitHubRemote(data);
 }
 // HEAD is drawn as a ring on the graph, so "HEAD -> main" reads as "main".

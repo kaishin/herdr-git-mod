@@ -5,7 +5,7 @@ import { codewalkerInstalled, reviewTarget, commitReviewProblem, commitReviewArg
 import { GitClient } from "./client.js";
 import { layoutLanes } from "./lanes.js";
 import { dockExpand, RESTORE_TIMEOUT } from "./dock-expand.js";
-import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl, reviewStateLabel, hasGitHubRemote, remotesKey, noPullRequests } from "./model.js";
+import { contextKey, ago, tint, refLabel, reviewLabel, checksSummary, prProblem, shortDate, repositoryUrl, reviewStateLabel, hasGitHubRemote, remotesKey, noPullRequests, primaryRemote } from "./model.js";
 import { button, segments, bar, secondary, pill, empty, graphCell, graphCellWidth, checkColor, icon, stop, ROW, MOD } from "./ui.js";
 
 const since = time => { const rel = ago(time); return rel === "now" ? "just now" : `${rel} ago`; };
@@ -144,6 +144,7 @@ export default class Git extends View {
     this.prs = null;
     // What gh said about these remotes: {key, ok}. ok false hides the PR tab.
     this.prCheck = null;
+    this.prRemote = null;
     this.prLoading = false;
     this.loading = false;
     this.detailLoading = false;
@@ -179,7 +180,7 @@ export default class Git extends View {
   // The Pull requests tab shows only for a checkout that can have them: a remote
   // named like GitHub, or one gh accepted. Without one, gh is not asked again.
   prsShown() {
-    const data = this.data;
+    const data = this.prData();
     if (!data?.remotes?.length) return false;
     if (this.prCheck?.key === remotesKey(data)) return this.prCheck.ok;
     return hasGitHubRemote(data);
@@ -193,13 +194,13 @@ export default class Git extends View {
   loadPRs(cx) {
     if (this.busy || this.prLoading || !this.data) return;
     if (!this.data.remotes.length) { this.hidePRs(cx); cx.notify(); return; }
-    const data = this.data, key = remotesKey(data);
+    const data = this.prData(), key = remotesKey(data);
     if (this.prCheck?.key === key && !this.prCheck.ok) return;
     const epoch = ++this.prEpoch, client = this.client, filter = this.filter, remotes = data.remotes;
     this.prLoading = true;
     cx.spawn(async cx => {
       try {
-        const result = await client.prs(filter, this.prLimit);
+        const result = await client.prs(filter, this.prLimit, data);
         if (epoch !== this.prEpoch) return;
         this.prs = result.rows;
         this.prMore = result.more;
@@ -276,7 +277,7 @@ export default class Git extends View {
     });
     cx.spawn(async cx => {
       try {
-        const detail = kind === "commit" ? await client.commit(item.hash) : await client.pr(item.number);
+        const detail = kind === "commit" ? await client.commit(item.hash) : await client.pr(item.number, item.url);
         if (epoch === this.detailEpoch) this.detail = detail;
       } catch (e) { if (epoch === this.detailEpoch) this.detailError = e.message; }
       finally { if (epoch === this.detailEpoch) { this.detailLoading = false; cx.notify(); } }
@@ -367,6 +368,33 @@ export default class Git extends View {
   branchRows() {
     const query = this.search.value().toLowerCase();
     return (this.data?.branches || []).filter(b => b.name.toLowerCase().includes(query));
+  }
+  prData() { return this.data ? { ...this.data, selectedRemote: this.prRemote } : null; }
+  choosePRRemote(remote, cx) {
+    if (this.busy || remote === primaryRemote(this.prData())) return;
+    this.prRemote = remote;
+    this.prEpoch++;
+    this.prLoading = false;
+    this.prCheck = null;
+    this.prs = null;
+    this.prMore = false;
+    this.prError = null;
+    this.prLimit = 50;
+    this.selected = null;
+    this.detail = null;
+    this.detailError = null;
+    this.detailLoading = false;
+    this.detailEpoch++;
+    this.comments = null;
+    this.pending = null;
+    this.cursor = null;
+    this.loadPRs(cx);
+    cx.notify();
+  }
+  prRemotes() {
+    return bar(40).child(secondary("PR remote"))
+      .child(h_flex().flex_1().min_w(0).overflow_x_scrollbar()
+        .child(segments("pr-remote", this.data.remotes.map(name => [name, name]), primaryRemote(this.prData()), (remote, cx) => this.choosePRRemote(remote, cx))));
   }
   prFilter() {
     return segments("pr-filter", [["all", "This repo"], ["mine", "Mine"], ["review", "To review"]], this.filter, (filter, cx) => {
@@ -707,7 +735,7 @@ export default class Git extends View {
       else this.where = where;
     }
     const data = this.data, width = this.width, wide = width >= 760;
-    const expand = this.expandButton(p, cx), repoUrl = repositoryUrl(data);
+    const expand = this.expandButton(p, cx), repoUrl = repositoryUrl(this.prData());
     const showFilter = this.mode === "prs" && (!this.prError || this.prError.kind === "other");
     const repo = (data?.root || this.where.cwd || "").split(/[\\/]/).filter(Boolean).pop();
     const error = this.operationError || this.error;
@@ -759,6 +787,7 @@ export default class Git extends View {
         .when(Boolean(data?.branch), e => e.child(data.upstream
           ? button("push", data.ahead ? String(data.ahead) : "", cx => this.ask({ kind: "push" }, cx), { icon: "push", enabled: canSync && data.remotes.length > 0, tooltip: data.ahead ? `Push ${data.ahead} outgoing ${data.ahead === 1 ? "commit" : "commits"} to ${data.upstream}` : `Push to ${data.upstream}` })
           : button("push", "Publish", cx => this.ask({ kind: "push" }, cx), { icon: "push", enabled: canSync && data.remotes.length > 0, tooltip: data.remotes.length ? "Publish branch and set its upstream" : "Add a remote before publishing" }))))
+      .when(this.mode === "prs" && data?.remotes.length > 1, e => e.child(this.prRemotes()))
       .when(showFilter && width < PR_FILTER_INLINE, e => e.child(bar(40).child(this.prFilter())))
       .when(Boolean(error), e => e.child(h_flex().flex_none().px(14).py(7).gap(8).items_start().bg(tint(t.blocked, "1a")).border_b(1).border_color(t.border)
         .child(div().flex_1().min_w(0).pt(2).text_size(12).text_color(t.blocked).child(error))

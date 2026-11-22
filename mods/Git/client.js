@@ -1,4 +1,4 @@
-import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseRemotes, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs, PR_COMMENTS_QUERY, prLocation, parsePRComments, imagesAsText } from "./model.js";
+import { READ, PR_FIELDS, COMMIT_FILES, parseLog, parseStatus, parseBranches, parseRemotes, parseCommitMeta, parseCommitFiles, slimPR, sameHead, actionArgs, PR_COMMENTS_QUERY, prLocation, parsePRComments, imagesAsText, repositoryUrl } from "./model.js";
 
 export class GitClient {
   constructor(exec, where) { this.exec = exec; this.where = { ...where }; this.writing = false; }
@@ -32,8 +32,10 @@ export class GitClient {
     const remoteList = parseRemotes(remotes);
     return { ...after, root, commits: commits.slice(0, limit), more: commits.length > limit, branches: parseBranches(branches), remotes: remoteList.names, remoteUrls: remoteList.urls, upstreamRemote, upstreamRef };
   }
-  async prs(filter = "all", limit = 50) {
-    const args = ["pr", "list", "--state", "open", "--limit", String(limit + 1), "--json", PR_FIELDS];
+  async prs(filter = "all", limit = 50, snapshot) {
+    const repo = repositoryUrl(snapshot);
+    if (!repo) throw new Error("The selected remote has no supported GitHub URL. Select a GitHub remote to load pull requests.");
+    const args = ["pr", "list", "--repo", repo, "--state", "open", "--limit", String(limit + 1), "--json", PR_FIELDS];
     if (filter === "mine") args.push("--author", "@me");
     if (filter === "review") args.push("--search", "review-requested:@me");
     const rows = JSON.parse(await this.command("gh", args));
@@ -51,9 +53,11 @@ export class GitClient {
     return { ...meta, files: files.slice(0, COMMIT_FILES), totalFiles: files.length,
       additions: files.reduce((n, f) => n + (f.additions || 0), 0), deletions: files.reduce((n, f) => n + (f.deletions || 0), 0) };
   }
-  async pr(number) {
+  async pr(number, url) {
     if (!Number.isInteger(number) || number < 1) throw new Error("Invalid pull request.");
-    const pr = JSON.parse(await this.command("gh", ["pr", "view", String(number), "--json", `${PR_FIELDS},body,mergeable,mergeStateStatus,additions,deletions,changedFiles`]));
+    const at = prLocation(url);
+    if (!at || at.number !== number) throw new Error("This pull request has no matching GitHub address.");
+    const pr = JSON.parse(await this.command("gh", ["pr", "view", url, "--json", `${PR_FIELDS},body,mergeable,mergeStateStatus,additions,deletions,changedFiles`]));
     const body = imagesAsText(pr.body);
     return { ...slimPR(pr), body: body.slice(0, 12000), bodyTruncated: body.length > 12000, checksList: (pr.statusCheckRollup || []).map(c => ({ name: c.name || c.context || "Check", state: c.conclusion || c.state || c.status || "UNKNOWN", url: c.detailsUrl || c.targetUrl })) };
   }
@@ -75,9 +79,9 @@ export class GitClient {
       if (root !== snapshot.root) throw new Error("The repository changed. Refresh and try again.");
       let command = "git", args;
       if (action.kind === "pr") {
-        const latest = await this.pr(action.pr.number);
+        const latest = await this.pr(action.pr.number, action.pr.url);
         if (latest.headRefOid !== action.pr.headRefOid || latest.headRefName !== action.pr.headRefName) throw new Error("The PR branch changed. Refresh it before checking out.");
-        command = "gh"; args = ["pr", "checkout", String(action.pr.number)];
+        command = "gh"; args = ["pr", "checkout", action.pr.url];
       } else {
         args = actionArgs(action, snapshot);
         if (action.kind === "branch") {

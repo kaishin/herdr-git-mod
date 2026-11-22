@@ -9,13 +9,13 @@ A native Git panel for the [Herdr](https://herdr.dev) desktop app. It shows the 
 ## What it does
 
 - Draws the commit graph with colored lanes, merges, HEAD, branch and tag labels. Load older commits, or limit history to the current branch.
-- Lists open PRs for **This repo**, **Mine** or **To review**. Shows CI and review decisions separately; missing checks never count as passing. A checkout with no GitHub remote shows history only: the History/Pull requests toggle is hidden and `gh` is not called.
+- Lists open PRs for **This repo**, **Mine** or **To review**. In a checkout with multiple remotes, **PR remote** selects one repository. It defaults to `origin`, or the first remote when `origin` is absent. It never follows branch tracking or the GitHub CLI default. Shows CI and review decisions separately; missing checks never count as passing. A checkout with no GitHub remote shows history only: the History/Pull requests toggle is hidden and `gh` is not called.
 - Opens commit summaries (message, parents, refs, changed files) and PR descriptions and checks. **Check out** switches to a PR with `gh pr checkout`, including forks.
 - Shows PR comments below the checks, newest first: reviews with their verdict, conversation comments, and inline review threads with file and line, replies, and Resolved/Outdated marks. Each bot keeps only its newest summary post. Read-only: reply on GitHub through each comment's link. Herdr does not load remote images, so an image in a comment or description shows as its alt text, linked to the image or to the link around it.
 - **View diff** opens the selected commit in [Codewalker](#dependencies)'s commit review, in a new pane to the right of the followed pane. Local checkouts only.
 - Switches local branches, or creates a tracking branch from a remote ref. Branches held by other worktrees are marked and cannot be switched here.
 - Pulls fast-forward only. Pushes only the named branch, without force, follow-tags or recursive submodule pushes. Unpublished branches offer **Publish**.
-- A GitHub button next to Refresh opens the repository's page on GitHub. It uses the upstream's remote, then `origin`, then a lone remote, and shows only when that remote is on GitHub.
+- A GitHub button next to Refresh opens the repository's page on GitHub. It uses the selected PR remote, then `origin`, then the first remote, and shows only when that remote is on GitHub.
 - Follows the focused terminal's checkout, including remote spaces. A `folder` prop pins a copy to one checkout.
 
 ![Pull requests with synthetic preview data](docs/pull-requests.png)

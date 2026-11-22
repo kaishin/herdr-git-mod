@@ -123,9 +123,10 @@ test("CI summaries never call missing, skipped or unknown checks passed", () => 
 test("PR checkout revalidates the head and refuses dirty files before executing gh checkout", async t => {
   const f = await fixture(t); await f.commit("base");
   let checkouts = 0, head = "a".repeat(40);
-  const pr = { number: 7, headRefOid: head, headRefName: "feature" };
+  const pr = { number: 7, url: "https://github.com/fork/app/pull/7", headRefOid: head, headRefName: "feature" };
   const client = new GitClient(async (program, args, where) => {
     if (program !== "gh") return exec(program, args, where);
+    assert.equal(args[2], pr.url, "read and checkout must use the listed repository");
     if (args[1] === "view") return { code: 0, stdout: JSON.stringify({ ...pr, headRefOid: head }), stderr: "" };
     if (args[1] === "checkout") { checkouts++; return { code: 0, stdout: "", stderr: "" }; }
     throw new Error("unexpected command");
@@ -222,12 +223,13 @@ test("the GitHub button opens the repository page of a GitHub remote only", asyn
   ]) assert.equal(githubWebUrl(remote), url, remote);
   assert.deepEqual(parseRemotes("origin\tgit@github.com:a/b.git (fetch)\norigin\tgit@github.com:a/b.git (push)\nfork\thttps://github.com/c/b (fetch)\nfork\thttps://github.com/c/b (push)\n"),
     { names: ["origin", "fork"], urls: { origin: "git@github.com:a/b.git", fork: "https://github.com/c/b" } });
-  // The upstream's remote wins, then origin, then a lone remote.
+  // Origin wins even when the branch tracks another remote; otherwise use a lone remote.
   const data = { remotes: ["origin", "fork"], remoteUrls: { origin: "git@github.com:a/b.git", fork: "https://github.com/c/b" } };
   assert.equal(repositoryUrl(data), "https://github.com/a/b");
-  assert.equal(repositoryUrl({ ...data, upstreamRemote: "fork" }), "https://github.com/c/b");
+  assert.equal(repositoryUrl({ ...data, upstreamRemote: "fork" }), "https://github.com/a/b");
   assert.equal(repositoryUrl({ remotes: ["fork"], remoteUrls: { fork: "https://github.com/c/b" } }), "https://github.com/c/b");
-  assert.equal(repositoryUrl({ remotes: ["a", "b"], remoteUrls: { a: "git@github.com:x/y", b: "git@github.com:z/y" } }), null);
+  assert.equal(repositoryUrl({ remotes: ["a", "b"], remoteUrls: { a: "git@github.com:x/y", b: "git@github.com:z/y" } }), "https://github.com/x/y");
+  assert.equal(repositoryUrl({ ...data, selectedRemote: "fork" }), "https://github.com/c/b");
   // A real checkout reports its remote URLs.
   const { git, client, commit } = await fixture(t);
   await commit("one.txt");
@@ -312,4 +314,30 @@ test("images become linked alt text, because remote images do not load", () => {
   const fenced = "```md\n![kept](https://x.test/k.png)\n```\n![gone](https://x.test/g.png)";
   assert.equal(imagesAsText(fenced), "```md\n![kept](https://x.test/k.png)\n```\n[gone](<https://x.test/g.png>)");
   assert.equal(parsePRComments({ comments: { nodes: [{ author: { login: "c" }, body: "<img alt=\"P1\" src=\"https://x.test/p1\">", createdAt: "2026-01-01T00:00:00Z" }] } }).items[0].body, "[P1](<https://x.test/p1>)");
+});
+
+
+test("PR lists use only origin or the selected remote, never branch tracking or gh defaults", async () => {
+  const calls = [];
+  const client = new GitClient(async (program, args) => {
+    assert.equal(program, "gh");
+    calls.push(args);
+    return { code: 0, stdout: "[]", stderr: "" };
+  }, { cwd: "/fork" });
+  const snapshot = { remotes: ["origin", "upstream"], upstreamRemote: "upstream",
+    remoteUrls: { origin: "git@github.com:me/app.git", upstream: "https://github.com/team/app.git" } };
+  for (const filter of ["all", "mine", "review"]) {
+    await client.prs(filter, 50, snapshot);
+    const args = calls.at(-1);
+    assert.equal(args[args.indexOf("--repo") + 1], "https://github.com/me/app");
+    if (filter === "mine") assert.equal(args[args.indexOf("--author") + 1], "@me");
+    if (filter === "review") assert.equal(args[args.indexOf("--search") + 1], "review-requested:@me");
+  }
+  await client.prs("all", 50, { ...snapshot, selectedRemote: "upstream" });
+  assert.equal(calls.at(-1)[calls.at(-1).indexOf("--repo") + 1], "https://github.com/team/app");
+  const count = calls.length;
+  await assert.rejects(client.prs("all", 50, { remotes: [] }), /selected remote/);
+  assert.equal(calls.length, count, "no implicit gh repository fallback");
+  assert.notEqual(remotesKey(snapshot), remotesKey({ ...snapshot, selectedRemote: "upstream" }));
+  assert.equal(noPullRequests(snapshot, { kind: "not-github" }), false, "a failed remote must not hide the selector for the others");
 });
